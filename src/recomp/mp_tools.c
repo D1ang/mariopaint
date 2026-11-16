@@ -15,6 +15,7 @@
 
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
+#include <mp/calls.h>
 #include <snesrecomp/snesrecomp.h>
 
 #include <stdbool.h>
@@ -87,56 +88,40 @@ void mp_0096AB(void) {
 /* ========================================================================
  * $00:96E1 — Pen graphics update
  *
- * Loads the foreground and background pen tile graphics based on
- * the current tool mode and palette row.
+ * Loads the pen's tile graphics for the current tool and colour:
+ * index = XBA($A8) | $A6 into $B66C, then $B6F4 (with $198A for tool 8).
+ * Tool 3 has two other paths: $0EB8 set ($9725: $B780 with $0EBC, $B66C
+ * with $0EBE, $A451) and colour row >= $70 ($9714: $B6F4 with the index,
+ * $B66C with $0D, $A451).
  * ======================================================================== */
 void mp_0096E1(void) {
-    uint16_t tool = bus_wram_read16(0x04D0) & 0xFF;
-
+    uint16_t tool = bus_wram_read16(0x04D0) & 0x00FF;
     if (tool == 0x0003) {
-        /* Special tool — check palette state */
-        uint16_t eb8 = bus_wram_read16(0x0EB8);
-        if (eb8 != 0) {
-            /* Use alternate palette row */
-            goto alternate;
+        if (bus_wram_read16(0x0EB8) != 0) {                 /* 96EC -> 9725 */
+            CPU_SET_A16(bus_wram_read16(0x0EBC));
+            call_jsr(0x00B780);
+            CPU_SET_A16(bus_wram_read16(0x0EBE));
+            call_jsr(0x00B66C);
+            tail_jmp(0x00A451);
+            return;
         }
-        uint16_t pal = bus_wram_read16(0x00A6);
-        if (pal >= 0x0070) {
-            goto high_palette;
+        if (bus_wram_read16(0x00A6) >= 0x0070) {           /* 96F1 -> 9714 */
+            uint16_t a8 = bus_wram_read16(0x00A8);
+            CPU_SET_A16((uint16_t)(((a8 << 8) | (a8 >> 8)) | bus_wram_read16(0x00A6)));
+            call_jsr(0x00B6F4);
+            CPU_SET_A16(0x000D);
+            call_jsr(0x00B66C);
+            tail_jmp(0x00A451);
+            return;
         }
     }
-
-    /* Standard pen graphics: combine tool high byte with palette row */
-    {
+    {                                                       /* 96F8 */
         uint16_t a8 = bus_wram_read16(0x00A8);
-        uint16_t pal = bus_wram_read16(0x00A6);
-        uint16_t idx = (a8 & 0xFF00) | (pal & 0xFF);
-        CPU_SET_A16(idx);
-        mp_00B66C();
-
-        tool = bus_wram_read16(0x04D0) & 0xFF;
-        if (tool == 0x0008) {
-            CPU_SET_A16(bus_wram_read16(0x198A));
-        } else {
-            /* A still set from B66C, call B6F4 */
-        }
-        mp_00B6F4();
-        return;
-    }
-
-high_palette:
-alternate:
-    /* High palette or alternate — use different source */
-    {
-        uint16_t eb8 = bus_wram_read16(0x0EB8);
-        if (eb8 != 0) {
-            uint16_t ebe = bus_wram_read16(0x0EBE);
-            CPU_SET_A16(ebe);
-        } else {
-            CPU_SET_A16(bus_wram_read16(0x00A6));
-        }
-        mp_00B66C();
-        mp_00B6F4();
+        CPU_SET_A16((uint16_t)(((a8 << 8) | (a8 >> 8)) | bus_wram_read16(0x00A6)));  /* XBA; ORA $A6 */
+        call_jsr(0x00B66C);
+        if ((bus_wram_read16(0x04D0) & 0x00FF) == 0x0008)
+            CPU_SET_A16(bus_wram_read16(0x198A));          /* 970E */
+        tail_jmp(0x00B6F4);                                 /* JMP $B6F4 */
     }
 }
 
@@ -562,62 +547,107 @@ void mp_00F921(void) {
 }
 
 /* ========================================================================
- * Pen tile transform helper
+ * Pen tile transforms — $01:D56D / $01:D597 and the modes they dispatch
  *
- * Copies 128 bytes from src to dst with optional transforms based on
- * pen mode ($0997). Mode 0 = direct copy. Modes 1-7 handle flips and
- * rotations using a bit-reverse LUT at $02:F000.
+ * The 16x16 pen is four 4bpp tiles of $20 bytes (top-left, top-right,
+ * bottom-left, bottom-right). Mode = $0997 (0 while the eraser menu,
+ * $1992, is up), via the table at $D587/$D5B1:
+ *   0 $D5C1 copy             4 $D6A1 rotate (ASL/ROR)
+ *   1 $D5CF mirror left-right 5 $D6E8 rotate (LSR/ROL)
+ *   2 $D625 mirror up-down    6 $D72F 4 then 2
+ *   3 $D68B 1 then 2          7 $D745 5 then 2
+ * The two-step modes go through a scratch pen at $1D2A, as the ROM does.
  * ======================================================================== */
-static void pen_tile_transform(uint16_t src, uint16_t dst) {
-    uint16_t mode = 0;
-    uint16_t erase = bus_wram_read16(0x1992);
-    if (erase == 0) {
-        mode = bus_wram_read16(0x0997);
-    }
+#define PEN_SCRATCH 0x1D2A
 
-    if (mode == 0) {
-        /* Mode 0: Direct copy (128 bytes) */
-        for (int y = 0x7E; y >= 0; y -= 2) {
-            uint16_t val = bus_wram_read16(src + y);
-            bus_wram_write16(dst + y, val);
-        }
-    } else if (mode == 1) {
-        /* Mode 1: Horizontal flip via bit-reverse LUT at $02:F000 */
-        /* The tile is 4 × 32-byte blocks. Flip reverses bits in each byte
-         * and swaps block pairs (left↔right halves of the 16-pixel pen). */
-        for (int blk = 0; blk < 4; blk++) {
-            uint16_t s = src + blk * 0x20;
-            /* Swap: src block 0↔2, 1↔3 → dst block 2↔0, 3↔1 */
-            uint16_t d = dst + ((blk ^ 2) * 0x20);
-            for (int i = 0; i < 0x20; i++) {
-                uint8_t val = bus_wram_read8(s + i);
-                uint8_t rev = bus_read8(0x02, 0xF000 + val);
-                bus_wram_write8(d + i, rev);
+static void pen_copy(uint16_t src, uint16_t dst) {             /* $D5C1 */
+    for (int y = 0x7E; y >= 0; y -= 2)
+        bus_wram_write16(dst + y, bus_wram_read16(src + y));
+}
+
+static void pen_mirror_lr(uint16_t src, uint16_t dst) {        /* $D5CF */
+    /* Swap the left and right tiles, bit-reversing every byte with the
+     * table at $02:F000. Rows run $1F down to 0, as in the ROM. */
+    for (int y = 0x1F; y >= 0; y--) {
+        bus_wram_write8(dst + 0x20 + y, bus_read8(0x02, 0xF000 + bus_wram_read8(src + y)));
+        bus_wram_write8(dst + y,        bus_read8(0x02, 0xF000 + bus_wram_read8(src + 0x20 + y)));
+        bus_wram_write8(dst + 0x60 + y, bus_read8(0x02, 0xF000 + bus_wram_read8(src + 0x40 + y)));
+        bus_wram_write8(dst + 0x40 + y, bus_read8(0x02, 0xF000 + bus_wram_read8(src + 0x60 + y)));
+    }
+}
+
+static void pen_mirror_ud(uint16_t src, uint16_t dst) {        /* $D625 */
+    /* Swap top and bottom tiles and reverse the 8 rows inside each
+     * bitplane pair: rows are read $0E,$0C..$00 then $1E..$10 while the
+     * destination pointers step forward. */
+    uint16_t out = 0;
+    int y = 0x0E;
+    for (;;) {
+        bus_wram_write16(dst + 0x40 + out, bus_wram_read16(src + y));
+        bus_wram_write16(dst + 0x60 + out, bus_wram_read16(src + 0x20 + y));
+        bus_wram_write16(dst + out,        bus_wram_read16(src + 0x40 + y));
+        bus_wram_write16(dst + 0x20 + out, bus_wram_read16(src + 0x60 + y));
+        out += 2;
+        y -= 2;
+        if (y >= 0x10) continue;                                   /* D66F */
+        if (y == 0x0E) break;                                      /* D674 */
+        if (y >= 0) continue;                                      /* D679 */
+        y = 0x1E;                                                  /* D67E */
+    }
+}
+
+/* Modes 4/5: rotate by a quarter turn. Each source word gives one bit to
+ * each of 16 consecutive destination bytes; the high and low byte take
+ * turns (XBA), most significant bit first (ASL into ROR) for mode 4, least
+ * significant first (LSR into ROL) for mode 5. Every 8 words the
+ * destination moves to the offset in the table. */
+static void pen_rotate(uint16_t src, uint16_t dst, uint16_t table, bool msb_first) {
+    uint16_t ptr = dst;
+    for (int y = 0x7E; y >= 0; y -= 2) {
+        if ((y & 0x0F) == 0x0E)
+            ptr = (uint16_t)(dst + bus_read8(0x01, (uint16_t)(table + (y >> 4))));
+        uint16_t w = bus_wram_read16(src + y);
+        uint8_t cur = (uint8_t)(w >> 8), other = (uint8_t)w;      /* XBA */
+        for (int k = 0x0F; k >= 0; k--) {
+            uint8_t d = bus_wram_read8(ptr + k);
+            if (msb_first) {
+                uint8_t bit = cur >> 7; cur = (uint8_t)(cur << 1);   /* ASL */
+                d = (uint8_t)((d >> 1) | (bit << 7));                /* ROR */
+            } else {
+                uint8_t bit = cur & 1; cur >>= 1;                    /* LSR */
+                d = (uint8_t)((d << 1) | bit);                       /* ROL */
             }
-        }
-    } else if (mode == 2) {
-        /* Mode 2: Vertical flip — reverse row order within each tile half.
-         * Each tile half = 2 blocks of 16 bytes (bp0-1, bp2-3).
-         * Rows within each 16-byte block are reversed (row 0↔7). */
-        for (int half = 0; half < 2; half++) {
-            for (int bp = 0; bp < 2; bp++) {
-                uint16_t s_base = src + half * 0x40 + bp * 0x10;
-                uint16_t d_base = dst + half * 0x40 + bp * 0x10;
-                for (int row = 0; row < 8; row++) {
-                    uint16_t val = bus_wram_read16(s_base + row * 2);
-                    bus_wram_write16(d_base + (7 - row) * 2, val);
-                }
-            }
-        }
-    } else {
-        /* Modes 3-7: For now, fall back to direct copy.
-         * These are compound transforms (flip+rotate) that are rarely
-         * used in normal drawing — the user would need to rotate the pen. */
-        for (int y = 0x7E; y >= 0; y -= 2) {
-            uint16_t val = bus_wram_read16(src + y);
-            bus_wram_write16(dst + y, val);
+            bus_wram_write8(ptr + k, d);
+            uint8_t t = cur; cur = other; other = t;                 /* XBA */
         }
     }
+}
+
+/* What A holds on return matters: $B66C returns it, and $96E1 passes it on
+ * to $B6F4 as that routine's input. Modes 0/4/5 end with PLA x2/x3, leaving
+ * the source pointer; the others end with TSC; ADC #$10; TCS, leaving the
+ * stack pointer as it is at the RTL (= S on entry from a JSL). */
+static void pen_tile_transform(uint16_t src, uint16_t dst) {
+    uint16_t entry_s = g_cpu.S;
+    uint16_t mode = bus_wram_read16(0x1992) ? 0 : bus_wram_read16(0x0997);
+    uint16_t a = entry_s;
+    g_cpu.X = (uint16_t)(mode << 1);                            /* ASL; TAX */
+    switch (mode) {
+    case 0: pen_copy(src, dst); a = src; g_cpu.Y = 0xFFFE; break;
+    case 1: pen_mirror_lr(src, dst); g_cpu.Y = 0x00FF; break;
+    case 2: pen_mirror_ud(src, dst); g_cpu.Y = 0x000E; break;
+    case 3: pen_mirror_lr(src, PEN_SCRATCH); pen_mirror_ud(PEN_SCRATCH, dst); g_cpu.Y = 0x000E; break;
+    case 4: pen_rotate(src, dst, 0xD6E0, true); a = src; g_cpu.Y = 0xFFFE; break;
+    case 5: pen_rotate(src, dst, 0xD727, false); a = src; g_cpu.Y = 0xFFFE; break;
+    case 6: pen_rotate(src, PEN_SCRATCH, 0xD6E0, true); pen_mirror_ud(PEN_SCRATCH, dst); g_cpu.Y = 0x000E; break;
+    case 7: pen_rotate(src, PEN_SCRATCH, 0xD727, false); pen_mirror_ud(PEN_SCRATCH, dst); g_cpu.Y = 0x000E; break;
+    default: break;   /* the ROM would jump through bytes past its table */
+    }
+    g_cpu.flag_M = false;   /* every mode returns with 16-bit A/X/Y (REP #$30) */
+    g_cpu.flag_X = false;
+    CPU_SET_A16(a);
+    cpu_update_nz16(a);
+    g_cpu.flag_C = false;
 }
 
 /* ========================================================================

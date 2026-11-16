@@ -19,6 +19,7 @@
  */
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
+#include <mp/calls.h>
 #include <snesrecomp/snesrecomp.h>
 #include <stdint.h>
 #include <stdbool.h>
@@ -49,7 +50,7 @@ static void jmp_table(uint16_t table, uint16_t idx) {
     g_cpu.flag_C = (idx & 0x8000) != 0;
     CPU_SET_A16(a);
     ldx(a);
-    func_table_call(0x000000 | bus_read16(0x00, (uint16_t)(table + a)));
+    tail_jmp(bus_read16(0x00, (uint16_t)(table + a)));      /* JMP (table,x) */
 }
 
 /* ========================================================================
@@ -200,7 +201,7 @@ top:
     if (lda(0x0020) != 0) goto drawing;                     /* 8BEB */
 
     bus_wram_write16(0x053B, 0x0000);                       /* 8BEF */
-    func_table_call(0x009001);
+    call_jsr(0x009001);
     lda(0x04CA);
     if (!bit_imm(0x0011)) return;                           /* 8BFB */
     if (lda(0x19AA) != 0) goto special;                     /* 8C00 */
@@ -214,7 +215,7 @@ top:
     return;                                                 /* 8C0F */
 
 top_bar:                                                    /* 8BA9 */
-    func_table_call(0x008D2C);
+    call_jsr(0x008D2C);
     bus_wram_write16(0x00A2, g_cpu.X);
     bus_wram_write16(0x00A8, CPU_A16());
     if (lda(0x1992) == 0 && g_cpu.X == 0x0002) goto top_bar_go;  /* 8BB0 */
@@ -222,11 +223,11 @@ top_bar:                                                    /* 8BA9 */
     if (bit_imm(0x0020)) goto top_bar_go;                   /* 8BBA */
     return;
 top_bar_go:
-    func_table_call(0x009598);                              /* 8BC3 */
+    tail_jmp(0x009598);                              /* 8BC3 */
     return;
 
 bottom_bar: {                                               /* 8BC6 */
-        func_table_call(0x008E0B);
+        call_jsr(0x008E0B);
         uint16_t slot = CPU_A16();                          /* PHA */
         uint16_t id = g_cpu.X;
         if (id != 0x000A && id != 0x0024 && id != 0x0044) {
@@ -241,26 +242,26 @@ bottom_bar: {                                               /* 8BC6 */
         cpu_update_nz16(slot);
         bus_wram_write16(0x00A4, id);
         bus_wram_write16(0x00AC, slot);
-        func_table_call(0x0095E7);
+        tail_jmp(0x0095E7);
         return;
     }
 
 special:                                                    /* 8C10 */
     if (lda(0x099F) != 0 && lda(0x00AA) != 0x0007) {
         lda(0x04CA);
-        if (bit_imm(0x0002)) { func_table_call(0x009760); return; }
+        if (bit_imm(0x0002)) { tail_jmp(0x009760); return; }
     }
     lda(0x04CA);                                            /* 8C27 */
     if (!bit_imm(0x0020)) return;
-    func_table_call(0x008B03);
-    func_table_call(0x009564);
+    call_jsr(0x008B03);
+    tail_jmp(0x009564);
     return;
 
 drawing: {                                                  /* 8C35 */
         uint16_t tool = lda(0x04D0) & 0x00FF;
         if (tool == 0x0006) goto stamp;
-        func_table_call(0x0091C7);
-        if (!g_cpu.flag_C) { func_table_call(0x009564); return; }  /* 8C45 */
+        call_jsr(0x0091C7);
+        if (!g_cpu.flag_C) { tail_jmp(0x009564); return; }  /* 8C45 */
         lda(0x04CA);
         if (bit_imm(0x0010)) return;                        /* 8C4E: still held */
         bus_wram_write16(0x0020, 0x0000);                   /* 8C50 STZ $20 */
@@ -268,10 +269,10 @@ drawing: {                                                  /* 8C35 */
         cmp(tool, 0x0005);
         if (!g_cpu.flag_C) {                                /* 8C5D */
             op_lda_imm16(0x0018);
-            func_table_call(0x01D368);
+            call_jsl(0x01D368);
         }
         if (lda(0x00AE) == 0) return;                       /* 8C64 */
-        func_table_call(0x008B18);
+        tail_jmp(0x008B18);
         return;
     }
 
@@ -282,7 +283,7 @@ stamp:                                                      /* 8C6B */
         cmp(cy, 0x00C8);
         if (!g_cpu.flag_C) {
             lda(0x04CA);
-            if (bit_imm(0x0002)) { func_table_call(0x009760); return; }  /* 8CC4 */
+            if (bit_imm(0x0002)) { tail_jmp(0x009760); return; }  /* 8CC4 */
         }
     }
     {
@@ -291,7 +292,7 @@ stamp:                                                      /* 8C6B */
         if (!g_cpu.flag_C) goto stamp_canvas;
     }
     {
-        func_table_call(0x008E0B);                          /* 8C8F */
+        call_jsr(0x008E0B);                          /* 8C8F */
         uint16_t id = g_cpu.X;
         lda(0x04CA);
         if (id == 0x000A || id == 0x0024 || id == 0x0044) {
@@ -300,7 +301,7 @@ stamp:                                                      /* 8C6B */
             if (!bit_imm(0x0020)) goto stamp_canvas;        /* 8CA4 / 8CA9 */
         }
         if (id == 0x000B || id == 0x0025 || id == 0x002C || id == 0x0056) {
-            func_table_call(0x009760);                      /* 8CC4 */
+            tail_jmp(0x009760);                      /* 8CC4 */
             return;
         }
         if (id == 0x0000) goto stamp_canvas;                /* 8CC7 */
@@ -316,20 +317,20 @@ stamp:                                                      /* 8C6B */
 
 stamp_canvas:                                               /* 8CE7 */
     if (lda(0x0020) == 0x0003) {
-        func_table_call(0x009001);
-        if (lda(0x19AA) != 0) { func_table_call(0x009564); return; }  /* 8D00 */
+        call_jsr(0x009001);
+        if (lda(0x19AA) != 0) { tail_jmp(0x009564); return; }  /* 8D00 */
         lda(0x04CA);
         if (!bit_imm(0x0020)) return;                       /* 8D2B */
         goto stamp_end;
     }
-    func_table_call(0x0091C7);                              /* 8D03 */
-    if (!g_cpu.flag_C) { func_table_call(0x009564); return; }
+    call_jsr(0x0091C7);                              /* 8D03 */
+    if (!g_cpu.flag_C) { tail_jmp(0x009564); return; }
     lda(0x04CA);
     if (bit_imm(0x0010)) return;                            /* 8D11 */
 
 stamp_end:                                                  /* 8D13 */
     op_lda_imm16(0x0007);
-    func_table_call(0x01D368);
+    call_jsl(0x01D368);
     bus_wram_write16(0x0020, 0x0000);
     bus_wram_write16(0x1996, 0x0000);
     bus_wram_write16(0x1998, 0x0000);
@@ -422,7 +423,7 @@ static void update_highlight(void) {
     if (redraw) {                                           /* 90E7 */
         uint16_t old = bus_wram_read16(0x19A8);
         if (!(old & 0x8000)) highlight_cell(old, 0);
-        func_table_call(0x01DE97);                          /* upload BG1 map */
+        call_jsl(0x01DE97);                          /* upload BG1 map */
     }
     bus_wram_write16(0x19AC, lda(0x19AA));                  /* 90FA */
     bus_wram_write16(0x19A8, lda(0x19A6));
@@ -430,7 +431,7 @@ static void update_highlight(void) {
 
 /* $00:9001 — find the hovered grid cell. */
 void mp_009001(void) {
-    func_table_call(0x0091C7);
+    call_jsr(0x0091C7);
     if (!g_cpu.flag_C) return;                              /* 9004 */
     uint8_t db = g_cpu.DB;
     bus_wram_write16(0x19A6, 0x0000);

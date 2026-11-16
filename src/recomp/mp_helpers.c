@@ -13,6 +13,8 @@
 
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
+#include <mp/calls.h>
+#include <mp/mem.h>
 #include <snesrecomp/snesrecomp.h>
 
 #include <stdbool.h>
@@ -192,12 +194,12 @@ void mp_00B66C(void) {
         /* Read from SRAM instead */
         offset -= 0x7800;
         for (int y = 0; y < 0x40; y += 2) {
-            uint16_t val = bus_read16(0x70, offset + y);  /* SRAM */
+            uint16_t val = read_long16(0x700000u + offset + y);  /* SRAM */
             bus_wram_write16(0x1BAA + y, val);
         }
         offset += 0x0200;  /* Next row */
         for (int y = 0; y < 0x40; y += 2) {
-            uint16_t val = bus_read16(0x70, offset + y);
+            uint16_t val = read_long16(0x700000u + offset + y);
             bus_wram_write16(0x1BAA + 0x40 + y, val);
         }
     } else {
@@ -209,18 +211,18 @@ void mp_00B66C(void) {
 
         /* Read tile data from ROM bank $0A */
         for (int y = 0; y < 0x40; y += 2) {
-            uint16_t val = bus_read16(0x0A, 0x8000 + offset + y);
+            uint16_t val = read_long16(0x0A8000u + offset + y);
             bus_wram_write16(0x1BAA + y, val);
         }
         offset += 0x0200;  /* Next row = +$200 in ROM, +$40 in buffer */
         for (int y = 0; y < 0x40; y += 2) {
-            uint16_t val = bus_read16(0x0A, 0x8000 + offset + y);
+            uint16_t val = read_long16(0x0A8000u + offset + y);
             bus_wram_write16(0x1BAA + 0x40 + y, val);
         }
     }
 
     /* Queue pen tile DMA */
-    func_table_call(0x01D56D);
+    call_jsl(0x01D56D);
 }
 
 /* ========================================================================
@@ -239,12 +241,12 @@ void mp_00B6F4(void) {
     if (offset >= 0x7800) {
         offset -= 0x7800;
         for (int y = 0; y < 0x40; y += 2) {
-            uint16_t val = bus_read16(0x70, offset + y);
+            uint16_t val = read_long16(0x700000u + offset + y);
             bus_wram_write16(0x1B2A + y, val);
         }
         offset += 0x0200;
         for (int y = 0; y < 0x40; y += 2) {
-            uint16_t val = bus_read16(0x70, offset + y);
+            uint16_t val = read_long16(0x700000u + offset + y);
             bus_wram_write16(0x1B2A + 0x40 + y, val);
         }
     } else {
@@ -256,17 +258,17 @@ void mp_00B6F4(void) {
         offset += 0x0800;
 
         for (int y = 0; y < 0x40; y += 2) {
-            uint16_t val = bus_read16(0x0A, 0x8000 + offset + y);
+            uint16_t val = read_long16(0x0A8000u + offset + y);
             bus_wram_write16(0x1B2A + y, val);
         }
         offset += 0x0200;
         for (int y = 0; y < 0x40; y += 2) {
-            uint16_t val = bus_read16(0x0A, 0x8000 + offset + y);
+            uint16_t val = read_long16(0x0A8000u + offset + y);
             bus_wram_write16(0x1B2A + 0x40 + y, val);
         }
     }
 
-    func_table_call(0x01D597);  /* Background pen transform: $1B2A → $1C2A */
+    call_jsl(0x01D597);  /* Background pen transform: $1B2A → $1C2A */
 }
 
 /* ========================================================================

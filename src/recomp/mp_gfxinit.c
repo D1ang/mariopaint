@@ -252,21 +252,21 @@ void mp_0089C3(void) {
 /* ========================================================================
  * $00:8A16 — BG2 tilemap fill
  *
- * Fills the BG2 tilemap buffer at $7E:2800 with tile numbers
- * $02DF down to $0020 (sequential tile grid for the canvas area).
+ * Fills the BG2 tilemap buffer from $7E:2C3E down to $7E:28C0 with tile
+ * numbers $02DF down to $0020 (sequential tile grid for the canvas area).
  * Then calls DE/B2 to queue the DMA.
  * ======================================================================== */
 void mp_008A16(void) {
-    uint8_t *wram = bus_get_wram();
-    uint16_t val = 0x02DF;
-
-    for (int x = 0x63E; x >= 0; x -= 2) {
-        wram[0x2800 + x]     = (uint8_t)(val & 0xFF);
-        wram[0x2800 + x + 1] = (uint8_t)(val >> 8);
+    /* The loop ends on the tile number, not on X: tiles $2DF down to $020
+     * go to $7E:2C3E down to $7E:28C0; the first $C0 bytes stay as they
+     * are. */
+    uint16_t x = 0x063E, val = 0x02DF;
+    do {
+        bus_wram_write16(0x2800 + x, val);                  /* STA $7E2800,x */
+        x -= 2;
         val--;
-        if (val < 0x0020) val = 0x02DF;  /* Wrap (original: CMP #$001F, BNE) */
-    }
-
+    } while (val != 0x001F);
+    g_cpu.X = x;
     func_table_call(0x01DEB2);
 }
 
@@ -410,13 +410,12 @@ void mp_01DE_queue_dma(const uint8_t *record, int len) {
 /* ========================================================================
  * $01:E6D0 — Direct DMA queue execution (bypass NMI)
  *
- * Same as E6CA but called directly when in force blank.
- * We just call our existing mp_01E6CA implementation.
+ * Same as E6CA but without the pending check: called directly in force
+ * blank. The body lives with E6CA in mp_bank01.c.
  * ======================================================================== */
 void mp_01E6D0(void) {
-    /* Set the pending flag so E6CA processes the queue */
-    bus_wram_write16(0x0202, 0x0001);
-    mp_01E6CA();
+    extern void mp_01E6D0_body(void);
+    mp_01E6D0_body();
 }
 
 /* ========================================================================

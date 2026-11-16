@@ -13,6 +13,7 @@
 
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
+#include <mp/mem.h>
 #include <snesrecomp/snesrecomp.h>
 
 #include <stdbool.h>
@@ -227,9 +228,9 @@ void mp_00B3FF(void) {
  * ======================================================================== */
 void mp_00A22D(void) {
     uint16_t tool = CPU_A16();
-    uint16_t src_ofs = tool * 3;  /* Each tool = 3 * 64 bytes = $C0 bytes */
-    src_ofs = src_ofs * 0x40;
-    src_ofs += 0x00BE;
+    uint16_t src_ofs = (uint16_t)(tool * 3);  /* ASL; ADC $01,s: 3 * 64 bytes = $C0 */
+    src_ofs = (uint16_t)(src_ofs << 6);
+    src_ofs = (uint16_t)(src_ofs + 0x00BE);
 
     /* Copy $C0 bytes of tilemap data */
     for (int y = 0x00BE; y >= 0; y -= 2) {
@@ -238,68 +239,43 @@ void mp_00A22D(void) {
         src_ofs -= 2;
     }
 
-    /* Push the modified BG1 tilemap to VRAM. Without this the bar is built in
-     * WRAM and never reaches the screen — the boot-time DMA has already run by
-     * the time the first tool is selected, so VRAM keeps the border fill. */
-    mp_01DE97();
+    /* No upload here: the ROM leaves queueing the BG1 map ($01:DE97) to its
+     * callers. An extra call once papered over a partly-native boot, but it
+     * adds a DMA record the ROM never makes. */
 }
 
 /* ========================================================================
- * $00:A25B — Load tool graphics into $7F buffer
+ * $00:A25B — Load tool graphics into the $7F:8000 buffer
  *
- * Loads tool-specific tile graphics from ROM bank $03 into the
- * scratch buffer at $7F:8000. Used for tool cursors and stamps.
- *
- * Uses a lookup table at $01:DB31 for source offsets and
- * $01:DB53 for tile addresses.
+ * $01:DB31 + tool*2 gives the start of a $FFFF-terminated list at $01:DB53
+ * of tile offsets into bank $03. Each tile copies three $40-byte rows,
+ * from $03:8000/$8200/$8400 + offset to $7F:8000/$8200/$8400 + Y; Y moves
+ * on by $40 per tile and by another $400 after every 8 tiles. Offsets
+ * $5400 and $5A00 get $0999 added unless $AA is $0F.
  * ======================================================================== */
 void mp_00A25B(void) {
     uint16_t tool = CPU_A16();
-    uint16_t tbl_ofs = tool * 2;
-
-    /* Read source offset from lookup table */
-    uint16_t src_base = bus_read16(0x01, 0xDB31 + tbl_ofs);
-
-    uint16_t dst_y = 0;
-    uint16_t entry = 0;
-
-    while (entry < 256) {
-        /* Read tile address from table */
-        uint16_t tile_addr = bus_read16(0x01, 0xDB53 + src_base + entry * 2);
-
-        if ((int16_t)tile_addr < 0) break;  /* $FFFF = end */
-
-        /* Check for special tile addresses */
-        if (tile_addr == 0x5400 || tile_addr == 0x5A00) {
-            uint16_t aa = bus_wram_read16(0x00AA);
-            if (aa != 0x000F) {
-                tile_addr += bus_wram_read16(0x0999);
-            }
-        }
-
-        /* Copy $40 bytes (one tile row) from ROM bank $03 */
-        for (int i = 0; i < 0x40; i += 2) {
-            uint16_t val = bus_read16(0x03, 0x8000 + tile_addr + i);
-            bus_write16(0x7F, 0x8000 + dst_y + i, val);
-        }
-        /* Copy rows 2-3 ($200 and $400 offset in ROM) */
-        for (int i = 0; i < 0x40; i += 2) {
-            uint16_t val = bus_read16(0x03, 0x8000 + tile_addr + 0x200 + i);
-            bus_write16(0x7F, 0x8000 + dst_y + 0x200 + i, val);
-        }
-        for (int i = 0; i < 0x40; i += 2) {
-            uint16_t val = bus_read16(0x03, 0x8000 + tile_addr + 0x400 + i);
-            bus_write16(0x7F, 0x8000 + dst_y + 0x400 + i, val);
-        }
-
-        dst_y += 2;
-        entry++;
-
-        /* Check for row boundary (every 8 entries) */
-        if ((entry & 0x07) == 0) {
-            dst_y += 0x0400;
-        }
+    uint16_t list = bus_read16(0x01, (uint16_t)(0xDB31 + (uint16_t)(tool << 1)));
+    uint16_t y = 0, count = 0;
+    for (;;) {
+        uint16_t t = read_long16(0x01DB53u + list);          /* A274 */
+        if (t & 0x8000) break;                              /* BMI: end */
+        if ((t == 0x5400 || t == 0x5A00) && bus_wram_read16(0x00AA) != 0x000F)
+            t = (uint16_t)(t + bus_wram_read16(0x0999));
+        uint16_t x = t;
+        do {                                                /* A296 */
+            bus_write16(0x7F, (uint16_t)(0x8000 + y), read_long16(0x038000u + x));
+            bus_write16(0x7F, (uint16_t)(0x8200 + y), read_long16(0x038200u + x));
+            bus_write16(0x7F, (uint16_t)(0x8400 + y), read_long16(0x038400u + x));
+            x += 2;
+            y += 2;
+        } while (y & 0x003F);
+        list += 2;                                          /* PLX; INX x2 */
+        count++;
+        if ((count & 0x0007) == 0) y += 0x0400;             /* A2BF */
     }
+    g_cpu.X = list;
+    g_cpu.Y = y;
 }
 
 /* ========================================================================

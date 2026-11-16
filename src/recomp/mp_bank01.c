@@ -624,50 +624,59 @@ void mp_01E66B(void) {
  *   Then for CGRAM: 1 byte (CGRAM address)
  *   For VRAM: 3 bytes (VMAIN, VRAM addr lo, VRAM addr hi)
  * ======================================================================== */
-void mp_01E6CA(void) {
-    if (bus_wram_read8(0x0202) == 0) return;
+/* $01:E6D0 body: run every queued record, then empty the queue. The ROM
+ * keeps its pointer in DP $CC/$CD and the record type in DP $DE, so those
+ * are written exactly as it does. Entered and left with 8-bit A/X/Y. */
+static void dma_queue_run(void) {
+    uint16_t dp = g_cpu.DP;
+    g_cpu.X = 0x01;                                         /* LDX #$01 */
+    bus_wram_write8(0x0202, 0x00);                          /* STZ x3 */
+    bus_wram_write8(0x0204, 0x00);
+    bus_wram_write8(0x0205, 0x00);
+    bus_wram_write8((uint16_t)(dp + 0xCD), 0x01);           /* STX $CD */
+    bus_wram_write8((uint16_t)(dp + 0xCC), 0x82);           /* STY $CC */
+    const uint16_t base = 0x0182;                           /* ($CC) */
 
-    /* Set up pointer to DMA command list at $0182 */
-    bus_wram_write16(0x0202, 0x0000);
-    bus_wram_write16(0x0204, 0x0000);
-
-    uint16_t y = 0;
-    uint16_t base = 0x0182;
-
+    uint16_t y = 0;                                         /* REP #$10 */
     for (;;) {
         uint8_t type = bus_wram_read8(base + y);
-        if (type == 0) break;  /* End of queue */
-
-        uint8_t de = type;  /* Save type byte */
+        CPU_SET_A8(type);
+        if (type == 0) break;                               /* E6E8 */
+        bus_wram_write8((uint16_t)(dp + 0xDE), type);       /* STA $DE */
         y++;
-
-        /* Source address */
-        bus_write8(0x00, DMA_SRCLO(0),  bus_wram_read8(base + y)); y++;
-        bus_write8(0x00, DMA_SRCHI(0),  bus_wram_read8(base + y)); y++;
+        bus_write8(0x00, DMA_SRCLO(0),   bus_wram_read8(base + y)); y++;
+        bus_write8(0x00, DMA_SRCHI(0),   bus_wram_read8(base + y)); y++;
         bus_write8(0x00, DMA_SRCBANK(0), bus_wram_read8(base + y)); y++;
-
-        /* Size */
-        bus_write8(0x00, DMA_SIZELO(0), bus_wram_read8(base + y)); y++;
-        bus_write8(0x00, DMA_SIZEHI(0), bus_wram_read8(base + y)); y++;
-
-        if (de & 0x01) {
-            /* CGRAM transfer */
-            bus_write8(0x00, DMA_PARAMS(0), 0x00);   /* 1-register */
-            bus_write8(0x00, DMA_DEST(0),   0x22);   /* $2122 = CGRAM data */
+        bus_write8(0x00, DMA_SIZELO(0),  bus_wram_read8(base + y)); y++;
+        bus_write8(0x00, DMA_SIZEHI(0),  bus_wram_read8(base + y)); y++;
+        if (type & 0x01) {                                  /* CGRAM */
+            bus_write8(0x00, DMA_PARAMS(0), 0x00);
+            bus_write8(0x00, DMA_DEST(0),   0x22);
             bus_write8(0x00, REG_CGRAM_ADDR, bus_wram_read8(base + y)); y++;
-        } else {
-            /* VRAM transfer */
-            bus_write8(0x00, DMA_PARAMS(0), 0x01);   /* 2-register word */
-            bus_write8(0x00, DMA_DEST(0),   0x18);   /* $2118 = VRAM data lo */
-            bus_write8(0x00, REG_VMAIN,     bus_wram_read8(base + y)); y++;
-            bus_write8(0x00, REG_VMADDL,    bus_wram_read8(base + y)); y++;
-            bus_write8(0x00, REG_VMADDH,    bus_wram_read8(base + y)); y++;
+        } else {                                            /* VRAM */
+            bus_write8(0x00, DMA_PARAMS(0), 0x01);
+            bus_write8(0x00, DMA_DEST(0),   0x18);
+            bus_write8(0x00, REG_VMAIN,  bus_wram_read8(base + y)); y++;
+            bus_write8(0x00, REG_VMADDL, bus_wram_read8(base + y)); y++;
+            bus_write8(0x00, REG_VMADDH, bus_wram_read8(base + y)); y++;
         }
-
-        /* Trigger DMA */
-        bus_write8(0x00, REG_MDMAEN, 0x01);
+        CPU_SET_A8(0x01);
+        bus_write8(0x00, REG_MDMAEN, 0x01);                 /* E73D */
     }
+    g_cpu.Y = y & 0x00FF;                                   /* SEP #$10 */
+    g_cpu.flag_Z = true;
 }
+
+/* $01:E6CA — run the DMA queue if anything is pending ($0202). */
+void mp_01E6CA(void) {
+    uint8_t pending = bus_wram_read8(0x0202);
+    CPU_SET_A8(pending);
+    if (pending == 0) { g_cpu.flag_Z = true; return; }
+    dma_queue_run();
+}
+
+/* $01:E6D0 — run the DMA queue now (callers in force blank). */
+void mp_01E6D0_body(void) { dma_queue_run(); }
 
 /* ========================================================================
  * $01:E747 — Brightness control + joypad read

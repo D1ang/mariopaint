@@ -62,6 +62,10 @@ def main():
     oracle = os.path.join(OUT, "oracle")
     r = canvas_tour.run(rom, canvas_tour.BOTTOM, oracle, real=True, extra_env={"MP_PROFILE": "5000"})
     prof = re.findall(r"^PROF (\w{6}) +\d+ +\w\w (JSR|JSL) .*recompiled", r.stderr, re.M)
+    # Every routine the tour executes, ported or not (tools/progress.py reads it).
+    os.makedirs(OUT, exist_ok=True)
+    with open(os.path.join(OUT, "executed.txt"), "w") as f:
+        f.write("\n".join(sorted(set(re.findall(r"^PROF (\w{6}) ", r.stderr, re.M)))) + "\n")
     spec = ",".join([a + ("L" if k == "JSL" else "") for a, k in prof if a not in FRAME_DRIVERS] +
                     [a for a in JUMP_ENTERED if a not in dict(prof)])
 
