@@ -52,6 +52,7 @@ void mp_01834B(void) { /* Title state 2+: complex animation — not yet recompil
 void mp_register_interact(void) {
     func_table_register(0x009001, mp_009001);
     func_table_register(0x009107, mp_009107);
+    func_table_register(0x009082, mp_009082);
     func_table_register(0x0091C7, mp_0091C7);
     func_table_register(0x009564, mp_009564);
     func_table_register(0x009598, mp_009598);

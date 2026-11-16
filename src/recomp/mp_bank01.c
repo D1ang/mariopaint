@@ -17,6 +17,7 @@
 
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
+#include <mp/mem.h>
 #include <snesrecomp/snesrecomp.h>
 
 #include <stdio.h>
@@ -765,38 +766,30 @@ void mp_01E794(void) {
 }
 
 /* ========================================================================
- * $01:E895 — Check empty tile rows for optimization
+ * $01:E895 — Mark empty rows of the saved picture
  *
- * Scans tile data rows and marks which ones are empty in $0569.
- * Used to optimize VRAM transfers.
+ * For 15 rows (X = $1C down to 0), ORs $40 bytes from each of two SRAM
+ * pointers ([$01] = $70:0780, [$05] = $70:0580 to start) and sets the
+ * word $0569+X to 1 if all of it is zero, else 0. The pointers move back
+ * $40 per row, or $240 after row X = $10. The pointers live in a
+ * direct-page frame on the stack (PHA x4; TCD), as in the ROM.
  * ======================================================================== */
 void mp_01E895(void) {
-    /* This routine scans pairs of tile data rows (at $0580/$0780 base,
-     * working backwards) and marks empty rows in $0569+.
-     * For now, implement as a stub — the optimization isn't critical
-     * for initial rendering. */
-    uint8_t *wram = bus_get_wram();
-
-    uint16_t ptr1 = 0x0580 + 0x0070 * 0x0E;  /* Starting high */
-    uint16_t ptr2 = 0x0780 + 0x0070 * 0x0E;
-
-    for (int row = 0x000E; row >= 0; row--) {
-        uint16_t ored = 0;
-        for (int y = 0x003E; y >= 0; y -= 2) {
-            ored |= (uint16_t)(wram[ptr1 + y] | (wram[ptr1 + y + 1] << 8));
-            ored |= (uint16_t)(wram[ptr2 + y] | (wram[ptr2 + y + 1] << 8));
-        }
-        bus_wram_write16(0x0569 + row * 2, (ored == 0) ? 1 : 0);
-
-        /* Skip row 8 ($0010/2 = 8) — uses different pointer adjustment */
-        if (row * 2 == 0x0010) {
-            ptr1 = 0x0580;
-            ptr2 = 0x0780;
-        } else {
-            ptr1 -= 0x0040;
-            ptr2 -= 0x0040;
-        }
+    uint32_t p1 = 0x700780, p2 = 0x700580;
+    for (int x = 0x1C; x >= 0; x -= 2) {
+        uint16_t a = 0;
+        bus_wram_write16((uint16_t)(0x0569 + x), 0x0000);   /* STZ $0569,x */
+        for (int y = 0x3E; y >= 0; y -= 2)
+            a = (uint16_t)(a | read_long16(p1 + (uint32_t)y) | read_long16(p2 + (uint32_t)y));
+        if (a == 0) bus_wram_write16((uint16_t)(0x0569 + x), 0x0001);   /* INC */
+        uint16_t back = (x == 0x10) ? 0x0240 : 0x0040;
+        p1 = (p1 & 0xFF0000) | (uint16_t)((uint16_t)p1 - back);
+        p2 = (p2 & 0xFF0000) | (uint16_t)((uint16_t)p2 - back);
+        CPU_SET_A16((uint16_t)p2);
     }
+    g_cpu.X = 0xFFFE;
+    g_cpu.Y = 0xFFFE;
+    CPU_SET_A16(0x0070);                                     /* last PLA */
 }
 
 /* ========================================================================

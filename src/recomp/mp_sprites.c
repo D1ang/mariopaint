@@ -149,127 +149,66 @@ void mp_01F91E(void) {
 }
 
 /* ========================================================================
- * $01:FA68 — Full sprite renderer (with flip and palette override)
+ * $01:FA68 — Draw a metasprite into the OAM buffer
  *
- * Like F91E but supports:
- *   - Horizontal/vertical flip (bits 14-15 of sprite ID)
- *   - Palette override (bits 12-13 of sprite ID)
- *   - Position mirror offsets ($012E/$0130)
- *
- * Input:
- *   A = sprite ID (bits 0-12: ID, bit 13: V-flip, bit 14: H-flip,
- *       bits 12-13: palette bits)
- *   X = screen X, Y = screen Y
+ * In: A = id (bit 15 flips vertically, bit 14 horizontally; bits 12-15
+ * also go into each part's attribute byte), X/Y = screen position.
+ * $0D:B018 + (id & $FFF)*2 points at the sprite: a part count, then
+ * 5-byte parts: X offset (bit 9 = large), Y offset, tile, attribute.
+ * Parts go to $0226 + $0446 (4 bytes each) until $0446 reaches $200;
+ * a part whose X lands in $100-$1BF (off screen) is skipped. The 9th X
+ * bit and the size bit go to the high table at $0426 through the masks
+ * at $0D:B000 / $0D:B008. Flipped offsets subtract the part's width
+ * ($012E small, $0130 large). Reads of the sprite data use DB = $0D;
+ * everything else is in WRAM (mirrored there).
  * ======================================================================== */
 void mp_01FA68(void) {
-    uint16_t raw = CPU_A16();
-    uint16_t base_x = g_cpu.X;
-    uint16_t base_y = g_cpu.Y;
-
-    /* Decode flags from high bits */
-    uint16_t attr_flip = raw & 0xC000;   /* H-flip, V-flip */
-    uint16_t attr_pal = raw & 0x3000;    /* Palette bits */
-
-    /* Extract H-flip and V-flip flags */
-    bool h_flip = (raw & 0x4000) != 0;
-    bool v_flip = (raw & 0x8000) != 0;
-
-    /* Get sprite ID (bits 0-12) */
-    uint16_t sprite_id = (raw & 0x3FFF) >> 1;
-
-    /* Look up sprite data pointer */
-    uint16_t ptr = rom0d_read16(0xB018 + sprite_id * 2);
-
-    /* Read sub-sprite count */
-    uint16_t count = bus_read16(0x0D, ptr);
-    ptr += 2;
-
-    uint16_t oam_idx = bus_wram_read16(0x0446);
-
-    for (uint16_t i = 0; i < count; i++) {
-        if (oam_idx >= 0x0200) break;
-
-        /* Read X offset */
-        uint16_t x_off = bus_read16(0x0D, ptr);
-        ptr += 2;
-
-        /* Get mirror offset based on size flag */
-        uint16_t mirror;
-        if (x_off & 0x0200) {
-            mirror = bus_wram_read16(0x0130);
+    uint8_t saved_p = cpu_get_p();
+    uint16_t id = CPU_A16(), sx = g_cpu.X, sy = g_cpu.Y;
+    uint16_t pal_bits = id & 0xC000;                        /* $13 */
+    uint16_t pri_bits = id & 0x3000;                        /* $15 */
+    bool vflip = (id & 0x8000) != 0;                        /* $0D sign */
+    bool hflip = (id & 0x4000) != 0;                        /* $0F sign */
+    uint16_t ix = (uint16_t)(((uint16_t)(id << 2) & 0x3FFF) >> 1);
+#define D16(a) bus_read16(0x0D, (uint16_t)(a))
+    uint16_t ptr = D16(0xB018 + ix);                        /* $05 */
+    uint16_t y = 0;
+    uint16_t count = D16(ptr + y); y += 2;                  /* $09 */
+    uint16_t x = bus_wram_read16(0x0446);
+    while (x < 0x0200) {                                    /* FAAD */
+        uint16_t e = D16(ptr + y); y += 2;
+        uint16_t width = bus_wram_read16((e & 0x0200) ? 0x0130 : 0x012E);   /* $11 */
+        uint16_t a = hflip ? (uint16_t)(((e ^ 0x01FF) + 1) - width) : e;
+        a = (uint16_t)((a + sx) & 0x01FF);                  /* $07 */
+        if (a >= 0x0100 && a < 0x01C0) {                    /* off screen */
+            y += 3;
         } else {
-            mirror = bus_wram_read16(0x012E);
+            uint16_t xw = (uint16_t)((e & 0x0200) | a);
+            bus_wram_write16((uint16_t)(0x0226 + x), xw);   /* X (+junk) */
+            x++;
+            /* High table: 2 bits per sprite, 8 sprites per word. */
+            uint16_t n = x >> 2;                            /* $0B */
+            uint16_t hi = (uint16_t)((x >> 4) & 0xFFFE);
+            uint16_t bits = D16(0xB000 + (((xw >> 8) & 3) << 1));
+            uint16_t mask = D16(0xB008 + ((n & 7) << 1));
+            uint16_t h = bus_wram_read16((uint16_t)(0x0426 + hi));
+            bus_wram_write16((uint16_t)(0x0426 + hi), (uint16_t)(((bits ^ h) & mask) ^ h));
+            uint16_t ey = D16(ptr + y); y += 1;
+            uint16_t b = vflip ? (uint16_t)(((ey ^ 0x00FF) + 1) - width) : ey;
+            bus_wram_write16((uint16_t)(0x0226 + x), (uint16_t)(b + sy));   /* Y (+junk) */
+            x++;
+            uint16_t t = D16(ptr + y); y += 2;
+            bus_wram_write16((uint16_t)(0x0226 + x), (uint16_t)((t ^ pal_bits) | pri_bits));
+            x += 2;
         }
-
-        /* Apply H-flip to X offset */
-        int16_t x_adj;
-        if (h_flip) {
-            x_adj = (int16_t)((x_off ^ 0x01FF) + 1);  /* Negate */
-            x_adj -= (int16_t)mirror;
-        } else {
-            x_adj = (int16_t)(x_off & 0x01FF);
-        }
-
-        /* Compute screen X */
-        uint16_t screen_x = ((uint16_t)(base_x + x_adj)) & 0x01FF;
-
-        /* Skip if offscreen (X between $100 and $1C0) */
-        if (screen_x >= 0x0100 && screen_x < 0x01C0) {
-            ptr += 3;  /* Skip Y offset and tile data */
-            continue;
-        }
-
-        /* Write X and upper OAM bits */
-        uint16_t x_bit9 = x_off & 0x0200;
-        bus_wram_write8(OAM_BUF + oam_idx, (uint8_t)(screen_x & 0xFF));
-        oam_idx++;
-
-        /* Upper OAM */
-        {
-            uint16_t sprite_num = (oam_idx - 1) / 4;
-            uint16_t hi_bits = ((x_bit9 | screen_x) >> 8) & 0x03;
-
-            uint16_t word_ofs = (sprite_num / 8) * 2;
-            uint16_t bit_slot = sprite_num & 0x07;
-
-            uint16_t pattern = rom0d_read16(0xB000 + (hi_bits & 0x03) * 2);
-            uint16_t mask = rom0d_read16(0xB008 + bit_slot * 2);
-
-            uint16_t cur = bus_wram_read16(OAM_HI_BUF + word_ofs);
-            cur = ((pattern ^ cur) & mask) ^ cur;
-            bus_wram_write16(OAM_HI_BUF + word_ofs, cur);
-        }
-
-        /* Read Y offset */
-        uint8_t y_off = bus_read8(0x0D, ptr);
-        ptr++;
-
-        /* Apply V-flip */
-        int16_t y_adj;
-        if (v_flip) {
-            y_adj = (int16_t)((y_off ^ 0xFF) + 1);
-            y_adj -= (int16_t)mirror;
-        } else {
-            y_adj = (int16_t)y_off;
-        }
-
-        bus_wram_write8(OAM_BUF + oam_idx, (uint8_t)((base_y + y_adj) & 0xFF));
-        oam_idx++;
-
-        /* Read tile + attributes, apply flip and palette override */
-        uint16_t tile_attr = bus_read16(0x0D, ptr);
-        ptr += 2;
-
-        tile_attr ^= attr_flip;   /* Apply H/V flip bits */
-        tile_attr |= attr_pal;    /* Apply palette override */
-
-        bus_wram_write8(OAM_BUF + oam_idx, (uint8_t)(tile_attr & 0xFF));
-        oam_idx++;
-        bus_wram_write8(OAM_BUF + oam_idx, (uint8_t)(tile_attr >> 8));
-        oam_idx++;
+        if (--count == 0) break;                            /* DEC $09 */
     }
-
-    bus_wram_write16(0x0446, oam_idx);
+#undef D16
+    bus_wram_write16(0x0446, x);                            /* FB5B */
+    g_cpu.X = x;
+    g_cpu.Y = y;
+    CPU_SET_A16((uint16_t)(g_cpu.S - 3));                   /* TSC; ADC #$22 */
+    cpu_set_p(saved_p);
 }
 
 /* ========================================================================

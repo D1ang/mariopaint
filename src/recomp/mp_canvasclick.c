@@ -410,6 +410,9 @@ static void load_cell_record(void) {
     CPU_SET_A16(recs);
 }
 
+/* Entry from ROM code (JSR $9082). */
+void mp_009082(void) { load_cell_record(); }
+
 /* $00:90C4 — move the highlight when the hovered cell changes. */
 static void update_highlight(void) {
     bool redraw = false;
