@@ -46,6 +46,14 @@ FRAME_DRIVERS = {"018260", "01E2CE", "01E794", "01E7C9"}
 # profile never lists them. They return through their dispatcher's caller's
 # return address, which the validator already handles, so they can be checked
 # like any other routine; they just have to be named here.
+# Translated and passing, but kept on the original code in normal play: they
+# run for several frames on the SNES, during which the NMI handler runs
+# (frame-counted effects such as the colour cycling advance). A native body
+# finishes at once, so the game would run a frame-counted animation step
+# ahead. Needs time-keeping in native bodies before they can run natively.
+#   $8B18  restore the canvas from the undo buffer ($6000 bytes, ~6 frames)
+TIMING_SENSITIVE = {"008B18"}
+
 JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
                 "009760", "009853", "00987B", "0098C3", "0098F8", "009C25", "009DAB", "009DFB"]
 
@@ -85,7 +93,7 @@ def main():
             # the handler itself wrote (WRAM, video memory, I/O registers).
             ok = int(calls) > 0 and int(mem) == 0 and int(mx) == 0 and int(skip) == 0
             passed += ok
-            if ok:
+            if ok and addr not in TIMING_SENSITIVE:
                 verified.append(addr + ("L" if kind.get(addr) == "JSL" else ""))
             f.write(f"{addr} {'PASS' if ok else 'FAIL'} calls={calls} mem_fail={mem} reg_fail={reg} mx_fail={mx} "
                     f"skipped={skip} irq={irq}{first}\n")

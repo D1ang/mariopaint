@@ -16,6 +16,7 @@
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
 #include <mp/calls.h>
+#include <mp/mem.h>
 #include <snesrecomp/snesrecomp.h>
 
 #include <stdbool.h>
@@ -25,19 +26,16 @@ extern bool g_quit;
 /* ========================================================================
  * $00:8B03 — Save canvas to undo buffer
  *
- * Copies $6000 bytes from the canvas buffer (pointed to by DP $0A)
- * to the undo buffer at $7F:A000.
+ * Copies $6000 bytes from the canvas buffer (the long pointer at DP $0A,
+ * carrying into the next bank like [$0A],Y) to the undo buffer at $7F:A000.
  * ======================================================================== */
 void mp_008B03(void) {
     op_rep(0x30);
-    for (int y = 0x5FFE; y >= 0; y -= 2) {
-        uint8_t lo = bus_wram_read8(0x0A);
-        uint8_t hi = bus_wram_read8(0x0B);
-        uint8_t bank = bus_wram_read8(0x0C);
-        uint16_t addr = ((uint16_t)hi << 8) | lo;
-        uint16_t val = bus_read16(bank, addr + y);
-        bus_write16(0x7F, 0xA000 + y, val);
-    }
+    uint32_t canvas = dp_long_ptr(g_cpu.DP, 0x0A);
+    for (int y = 0x5FFE; y >= 0; y -= 2)                    /* LDA [$0A],y */
+        bus_write16(0x7F, (uint16_t)(0xA000 + y), read_long16(canvas + (uint32_t)y));
+    g_cpu.X = 0xFFFE;
+    g_cpu.Y = 0xFFFE;
 }
 
 /* ========================================================================
@@ -48,14 +46,11 @@ void mp_008B03(void) {
  * ======================================================================== */
 void mp_008B18(void) {
     op_rep(0x30);
-    for (int y = 0x5FFE; y >= 0; y -= 2) {
-        uint16_t val = bus_read16(0x7F, 0xA000 + y);
-        uint8_t lo = bus_wram_read8(0x0A);
-        uint8_t hi = bus_wram_read8(0x0B);
-        uint8_t bank = bus_wram_read8(0x0C);
-        uint16_t addr = ((uint16_t)hi << 8) | lo;
-        bus_write16(bank, addr + y, val);
-    }
+    uint32_t canvas = dp_long_ptr(g_cpu.DP, 0x0A);
+    for (int y = 0x5FFE; y >= 0; y -= 2)                    /* STA [$0A],y */
+        write_long16(canvas + (uint32_t)y, bus_read16(0x7F, (uint16_t)(0xA000 + y)));
+    g_cpu.X = 0xFFFE;
+    g_cpu.Y = 0xFFFE;
 }
 
 /* ========================================================================
