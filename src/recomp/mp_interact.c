@@ -16,50 +16,6 @@
 extern bool g_quit;
 
 /* ========================================================================
- * $00:91C7 — Cursor zone check
- *
- * Checks if the cursor is in a clickable zone. Returns carry set
- * if cursor is in a valid zone, carry clear if not.
- * ======================================================================== */
-void mp_0091C7(void) {
-    uint16_t zone = bus_wram_read16(0x19AA);
-    if (zone == 0) {
-        g_cpu.flag_C = true;
-        return;
-    }
-
-    /* Zone is active — do bounds checking */
-    uint16_t page = bus_wram_read16(0x19FA);
-    uint16_t tbl_idx = 0;
-    if (page != 0) {
-        tbl_idx = bus_wram_read16(0x19C2) + 1;
-    }
-    tbl_idx *= 2;
-
-    uint16_t zone_ptr = bus_read16(0x00, 0x926C + tbl_idx);
-
-    uint16_t zone_ofs = (bus_wram_read16(0x19A6) & 0xFF) * 4 + 4;
-
-    /* Check cursor still within zone bounds */
-    uint16_t tool = bus_wram_read16(0x04D0) & 0xFF;
-    uint16_t cursor_x = bus_wram_read16(0x04DC);
-
-    if (tool >= 5 && tool != 7) {
-        cursor_x += 8;
-    }
-
-    uint16_t x_min = bus_read16(0x00, zone_ptr + zone_ofs);
-    uint16_t x_max = bus_read16(0x00, zone_ptr + zone_ofs + 2);
-
-    if ((int16_t)cursor_x < (int16_t)x_min || (int16_t)cursor_x >= (int16_t)x_max) {
-        g_cpu.flag_C = false;
-        return;
-    }
-
-    g_cpu.flag_C = true;
-}
-
-/* ========================================================================
  * Title screen animation states (12 states)
  *
  * These are registered individually for the state machine dispatch.

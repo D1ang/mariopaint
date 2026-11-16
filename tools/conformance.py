@@ -46,7 +46,8 @@ FRAME_DRIVERS = {"018260", "01E2CE", "01E794", "01E7C9"}
 # profile never lists them. They return through their dispatcher's caller's
 # return address, which the validator already handles, so they can be checked
 # like any other routine; they just have to be named here.
-JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7"]
+JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
+                "009760", "009853", "00987B", "0098C3", "0098F8", "009C25", "009DAB", "009DFB"]
 
 
 def snaps(d):

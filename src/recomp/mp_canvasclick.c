@@ -478,3 +478,47 @@ void mp_009001(void) {
 done:
     update_highlight();                                     /* 907E JMP $90C4 */
 }
+
+/* $00:91C7 — is the cursor still inside the hovered cell?
+ *
+ * C = 1: off the grid ($19AA == 0) or outside the cell in $19A6, so the
+ *        caller must look again. C = 0: still inside.
+ * Bounds are tested on the sign of (pos - bound), as BMI/BPL do. Tools
+ * 0-4 and 7 test X+8 against the minimum and X-9 against the maximum
+ * (likewise Y); the other tools test the cursor position itself. */
+static inline bool neg(uint16_t a, uint16_t m) { return ((uint16_t)(a - m) & 0x8000) != 0; }
+
+void mp_0091C7(void) {
+    if (lda(0x19AA) == 0) { g_cpu.flag_C = true; return; }  /* 91CC */
+    uint8_t db = g_cpu.DB;
+    uint16_t grid = bus_read16(db, (uint16_t)(0x926C + layout_index()));
+    g_cpu.X = (uint16_t)(layout_index());
+    uint16_t cell = bus_wram_read16(0x19A6);
+    uint16_t tool = bus_wram_read16(0x04D0) & 0x00FF;
+    bool padded = tool < 0x0005 || tool == 0x0007;          /* 91F0-91F8 */
+    bool inside = true;
+
+    /* Column: X range of the cell's column. */
+    uint16_t y = (uint16_t)(((cell & 0x00FF) << 2) + 4);
+    uint16_t cx = bus_wram_read16(0x04DC);
+    uint16_t lo = padded ? (uint16_t)(cx + 8) : cx;
+    uint16_t hi = padded ? (uint16_t)(cx + 8 - 0x11) : cx;
+    if (neg(lo, bus_read16(db, (uint16_t)(grid + y)))) inside = false;
+    else if (!neg(hi, bus_read16(db, (uint16_t)(grid + y + 2)))) inside = false;
+
+    if (inside) {
+        /* Row: Y ranges follow the column ranges ([grid] = column count). */
+        uint16_t row = (uint16_t)((cell & 0xFF00) >> 8);    /* AND #$FF00; XBA */
+        y = (uint16_t)(((uint16_t)(row + bus_read16(db, grid)) << 2) + 4);
+        uint16_t cy = bus_wram_read16(0x04DE);
+        lo = padded ? (uint16_t)(cy + 8) : cy;
+        hi = padded ? (uint16_t)(cy + 8 - 0x11) : cy;
+        if (neg(lo, bus_read16(db, (uint16_t)(grid + y)))) inside = false;
+        else if (!neg(hi, bus_read16(db, (uint16_t)(grid + y + 2)))) inside = false;
+        else y += 2;
+    }
+    g_cpu.Y = y;
+    CPU_SET_A16(grid);                                      /* PLA */
+    cpu_update_nz16(grid);
+    g_cpu.flag_C = !inside;                                 /* 9266 CLC / 9269 SEC */
+}
