@@ -42,6 +42,12 @@ BASELINE = os.path.join(HERE, "conformance_baseline.txt")
 # routine. Run natively they would advance the capture clock mid-check.
 FRAME_DRIVERS = {"018260", "01E2CE", "01E794", "01E7C9"}
 
+# Routines entered by JMP (abs,x) from a jump table, never by JSR/JSL, so the
+# profile never lists them. They return through their dispatcher's caller's
+# return address, which the validator already handles, so they can be checked
+# like any other routine; they just have to be named here.
+JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7"]
+
 
 def snaps(d):
     return {f: open(os.path.join(d, f), "rb").read() for f in sorted(os.listdir(d)) if f.endswith(".snap")}
@@ -55,7 +61,8 @@ def main():
     oracle = os.path.join(OUT, "oracle")
     r = canvas_tour.run(rom, canvas_tour.BOTTOM, oracle, real=True, extra_env={"MP_PROFILE": "5000"})
     prof = re.findall(r"^PROF (\w{6}) +\d+ +\w\w (JSR|JSL) .*recompiled", r.stderr, re.M)
-    spec = ",".join(a + ("L" if k == "JSL" else "") for a, k in prof if a not in FRAME_DRIVERS)
+    spec = ",".join([a + ("L" if k == "JSL" else "") for a, k in prof if a not in FRAME_DRIVERS] +
+                    [a for a in JUMP_ENTERED if a not in dict(prof)])
 
     checked = os.path.join(OUT, "validated")
     r = canvas_tour.run(rom, canvas_tour.BOTTOM, checked, real=True, extra_env={"MP_VALIDATE": spec,
@@ -63,18 +70,20 @@ def main():
     if snaps(oracle) != snaps(checked):
         print("WARNING: validation changed the run (snapshots differ from the oracle)")
 
-    rows = re.findall(r"^VALIDATE (\w{6}) calls=(\d+) mem_fail=(\d+) reg_fail=(\d+) mx_fail=(\d+) skipped=(\d+)(.*)$",
-                      r.stderr, re.M)
+    rows = re.findall(r"^VALIDATE (\w{6}) calls=(\d+) mem_fail=(\d+) reg_fail=(\d+) mx_fail=(\d+) skipped=(\d+) "
+                      r"irq=(\d+)(.*)$", r.stderr, re.M)
     kind = dict(prof)
     passed, verified = 0, []
     with open(os.path.join(OUT, "results.txt"), "w") as f:
-        for addr, calls, mem, reg, mx, skip, first in rows:
-            ok = int(calls) > 0 and int(mem) == 0 and int(mx) == 0 and int(skip) == 0
+        for addr, calls, mem, reg, mx, skip, irq, first in rows:
+            # A call an interrupt landed in is checked on WRAM only (outside
+            # what the handler wrote), so at least one clean call is required.
+            ok = (int(calls) > int(irq) and int(mem) == 0 and int(mx) == 0 and int(skip) == 0)
             passed += ok
             if ok:
                 verified.append(addr + ("L" if kind.get(addr) == "JSL" else ""))
             f.write(f"{addr} {'PASS' if ok else 'FAIL'} calls={calls} mem_fail={mem} reg_fail={reg} mx_fail={mx} "
-                    f"skipped={skip}{first}\n")
+                    f"skipped={skip} irq={irq}{first}\n")
     # MP_TIMED format: what main.c's k_verified should hold.
     with open(os.path.join(OUT, "verified.txt"), "w") as f:
         f.write(",".join(sorted(verified)) + "\n")

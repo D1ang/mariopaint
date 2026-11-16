@@ -528,11 +528,18 @@ finish:
  *
  * Computes a multiplicative palette display value and stores
  * in $0E9C, $0C2A, $0C2C.
+ *
+ * The 24-bit multiplier is region-specific: $323819 in the Japan/USA ROM,
+ * $3C4351 in the European one (x1.2 = 60 Hz / 50 Hz, a PAL timing scale).
+ * It is read from the ROM's own immediates (LDA #lo at $F93D, LDA #hi at
+ * $F947) so either region computes what its own code does.
  * ======================================================================== */
 void mp_00F921(void) {
-    uint16_t a = CPU_A16();
-    a = (a + 0x000E) << 8;
+    uint16_t a = (uint16_t)(CPU_A16() + 0x000E);         /* CLC; ADC #$0E */
+    a = (uint16_t)((a << 8) | (a >> 8));                    /* XBA */
     bus_wram_write16(0x0E9C, a);
+    const uint32_t mul = ((uint32_t)bus_read16(0x00, 0xF948) << 16) |
+                         bus_read16(0x00, 0xF93E);
     bus_wram_write16(0x0C2A, 0x0000);
     bus_wram_write16(0x0C2C, 0x0000);
 
@@ -546,7 +553,7 @@ void mp_00F921(void) {
         uint16_t e9c = bus_wram_read16(0x0E9C);
         bus_wram_write16(0x0E9C, e9c << 1);
         if (e9c & 0x8000) {
-            val += 0x00323819;
+            val += mul;
         }
 
         bus_wram_write16(0x0C2A, (uint16_t)(val & 0xFFFF));
