@@ -14,6 +14,7 @@
 
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
+#include <mp/calls.h>
 #include <snesrecomp/snesrecomp.h>
 
 /* OAM buffer addresses */
@@ -315,219 +316,121 @@ void mp_0087A8(void) {
 }
 
 /* ========================================================================
- * $00:9378 — Cursor sprite rendering
+ * $00:9378 — Cursor sprite
  *
- * Renders the cursor sprite into OAM based on:
- *   - Current tool mode ($04D0)
- *   - Cursor X/Y position ($04DC/$04DE)
- *   - Toolbar/palette state
- *   - Animation frame counters
- *
- * Reads sprite frame data from ROM tables at $00:950C-$955B.
- * The data table at $00:94E6 contains pointers to frame data.
- *
- * Frame data format: byte[0]=X_offset, byte[1]=Y_offset,
- * byte[2]=flags, then tile data bytes.
+ * Builds OAM entry $0226-$0229 (and its two high-table bits in $0426) for
+ * the mouse cursor. The sprite is an animation from the table at $94E6,
+ * picked by tool ($04D0; +$0A for the stamp tool on the second page), or
+ * #$0C (the plain hand) over the bars, the menus and the eraser screen.
+ * Each animation record: X offset, Y offset (7-bit signed; bit 7 of X =
+ * animate, of Y = large sprite), frame length, then tile numbers.
+ * $1998 counts frames within a tile, $199A is the tile index; switching to
+ * the hand saves them in $199C/$199E ($19A0 = saved) and switching back
+ * restores them. $1996 is restored on exit (it is only a scratch flag).
  * ======================================================================== */
+
+/* ASL; CMP #$80; ROR: sign-extend a 7-bit offset into 8 bits. */
+static inline uint8_t sext7(uint8_t v) { return (uint8_t)((v & 0x7F) | ((v & 0x40) << 1)); }
+
 void mp_009378(void) {
-    /* JSL CODE_01E8F6 — tile row optimization check */
-    func_table_call(0x01E8F6);
+    call_jsl(0x01E8F6);
+    uint8_t saved_p = cpu_get_p();                          /* PHP */
+    uint16_t saved_1996 = bus_wram_read16(0x1996);          /* PHA */
+    uint16_t a = bus_wram_read16(0x04D0);
+    uint16_t cy = bus_wram_read16(0x04DE);
 
-    /* Save current palette animation state */
-    uint16_t saved_1996 = bus_wram_read16(0x1996);
+    bool hand_zone;                                         /* 9384-93A3 */
+    if (cy < 0x001C) hand_zone = true;
+    else if (bus_wram_read16(0x19FA) != 0 && bus_wram_read16(0x19C2) == 0x0002)
+        hand_zone = cy >= 0x00BC;
+    else
+        hand_zone = cy >= 0x00C4;
 
-    /* Determine cursor sprite index based on tool and position */
-    uint16_t tool = bus_wram_read16(0x04D0);
-    uint16_t cursor_y = bus_wram_read16(0x04DE);
-
-    /* Check if cursor is in the canvas area */
-    if (cursor_y >= 0x001C) {
-        uint16_t xfa = bus_wram_read16(0x19FA);
-        if (xfa != 0) {
-            uint16_t xc2 = bus_wram_read16(0x19C2);
-            if (xc2 == 0x0002) {
-                if (cursor_y >= 0x00BC) goto toolbar_area;
-                goto in_canvas;
+    bool to_hand = hand_zone && bus_wram_read16(0x19AA) == 0 && bus_wram_read16(0x09D1) == 0;
+    for (;;) {
+        if (to_hand) {                                      /* 93AF */
+            if (bus_wram_read16(0x19A0) == 0) {
+                bus_wram_write16(0x199C, bus_wram_read16(0x1998));
+                bus_wram_write16(0x199E, bus_wram_read16(0x199A));
+                bus_wram_write16(0x19A0, (uint16_t)(bus_wram_read16(0x19A0) + 1));
             }
+            a = 0x000C;
         }
-        if (cursor_y < 0x00C4) goto in_canvas;
-    }
-
-toolbar_area:
-    /* Cursor is in toolbar area — check for toolbar override */
-    {
-        uint16_t xaa = bus_wram_read16(0x19AA);
-        if (xaa != 0) goto in_canvas;
-        uint16_t xd1 = bus_wram_read16(0x09D1);
-        if (xd1 != 0) goto in_canvas;
-    }
-
-    /* In toolbar: handle toolbar cursor logic */
-    {
-        uint16_t xa0 = bus_wram_read16(0x19A0);
-        if (xa0 != 0) goto use_toolbar_cursor;
-
-        /* Save current animation state */
-        bus_wram_write16(0x199C, bus_wram_read16(0x1998));
-        bus_wram_write16(0x199E, bus_wram_read16(0x199A));
-        bus_wram_write16(0x19A0, 0x0001);
-    }
-
-use_toolbar_cursor:
-    tool = 0x000C;  /* Toolbar cursor = index 12 */
-
-in_canvas:
-    /* Check if tool $0C needs to be applied vs. actual tool */
-    if (tool != 0x000C) {
-        uint16_t x567 = bus_wram_read16(0x0567);
-        if (x567 != 0) goto toolbar_area;  /* Force toolbar cursor */
-
-        uint16_t xa0 = bus_wram_read16(0x19A0);
-        if (xa0 != 0) {
-            /* Restore animation state from saved values */
+        if (a == 0x000C) break;                             /* 93C6 */
+        if (bus_wram_read16(0x0567) != 0) { to_hand = true; continue; }  /* 93CE */
+        if (bus_wram_read16(0x19A0) != 0) {                 /* 93D0: restore */
             bus_wram_write16(0x1998, bus_wram_read16(0x199C));
             bus_wram_write16(0x199A, bus_wram_read16(0x199E));
             bus_wram_write16(0x19A0, 0x0000);
         }
+        break;
     }
-
-    /* Special tool $06 handling */
-    if (tool == 0x0006) {
-        uint8_t dp20 = bus_wram_read8(0x0020);
-        if (dp20 == 0) {
+    if (a == 0x0006) {                                      /* 93E4: stamp */
+        if (bus_wram_read16(0x0020) == 0) {
             bus_wram_write16(0x1996, 0x0000);
             bus_wram_write16(0x1998, 0x0000);
             bus_wram_write16(0x199A, 0x0000);
         }
-        uint16_t x19c0 = bus_wram_read16(0x19C0);
-        if (x19c0 != 0) {
-            tool += 0x000A;  /* Tool 6 + offset → index 16 */
+        if (bus_wram_read16(0x19C0) != 0) a = (uint16_t)(a + 0x000A);
+    }
+
+    /* 93FF: $19A2 = high byte of A, then the record's frame count etc. */
+    bus_wram_write16(0x19A2, (uint16_t)((a << 8) | (a >> 8)));
+    uint16_t x = (uint16_t)((a & 0x00FF) << 1);
+    g_cpu.X = x;
+    uint8_t db = g_cpu.DB;
+    uint16_t rec = bus_read16(db, (uint16_t)(0x94E6 + x));
+    uint16_t next = bus_read16(db, (uint16_t)(0x94E8 + x));
+    bus_wram_write16(0x19A3, (uint16_t)(next - rec - 3));   /* tile count */
+#define REC(i) bus_read8(db, (uint16_t)(rec + (i)))
+    bus_wram_write8(0x19A4, REC(2));                        /* frame length */
+    bus_wram_write8(0x19A5, 0x00);
+
+    /* X position, with the 9th bit in $19A5 bit 0. */
+    uint8_t ox = sext7(REC(0));
+    if (ox & 0x80) bus_wram_write8(0x19A5, 0xFF);           /* DEC $19A5 */
+    uint16_t sx = (uint16_t)(ox + bus_wram_read8(0x04DC));
+    bus_wram_write8(0x0226, (uint8_t)sx);
+    uint8_t hi = (uint8_t)(bus_wram_read8(0x19A5) + bus_wram_read8(0x04DD) + (sx >> 8));
+    bus_wram_write8(0x19A5, hi & 0x01);
+    bus_wram_write8(0x1996, (uint8_t)((REC(0) & 0x80) | bus_wram_read8(0x1996)));
+
+    /* Y position; bit 7 of the Y byte becomes the size bit ($19A5 bit 1). */
+    uint8_t oy = sext7(REC(1));
+    bus_wram_write8(0x0227, (uint8_t)(oy + bus_wram_read8(0x04DE)));
+    uint8_t v = REC(1);
+    uint8_t rol = (uint8_t)((v << 1) | (v >> 7));          /* CMP #$80; ROL */
+    bus_wram_write8(0x19A5, (uint8_t)(((uint8_t)(rol << 1)) | bus_wram_read8(0x19A5)));
+
+    uint16_t y = 1;
+    if (rec == 0x9515 &&                                    /* 946C */
+        (bus_wram_read8(0x0EB8) != 0 || bus_wram_read8(0x00A6) >= 0x70)) {
+        bus_wram_write8(0x0228, 0x6C);                      /* 9480 */
+        bus_wram_write8(0x0229, bus_wram_read8(0x09CF));
+    } else {
+        if (bus_wram_read8(0x19A3) != 0) {                  /* 948D: animate */
+            if (bus_wram_read8(0x1998) >= bus_wram_read8(0x19A4)) {
+                bus_wram_write8(0x1998, 0x00);
+                bus_wram_write8(0x199A, (uint8_t)(bus_wram_read8(0x199A) + 1));
+            }
+            if (bus_wram_read8(0x199A) >= bus_wram_read8(0x19A3))
+                bus_wram_write8(0x199A, 0x00);
+            if (bus_wram_read8(0x1996) != 0)
+                bus_wram_write8(0x1998, (uint8_t)(bus_wram_read8(0x1998) + 1));
+            y = (uint16_t)((bus_wram_read16(0x199A) & 0x00FF) + 2);
         }
+        y++;                                                /* 94C0 */
+        bus_wram_write8(0x0228, REC(y));                    /* tile */
+        bus_wram_write8(0x0229, (uint8_t)(bus_wram_read8(0x19A2) | bus_wram_read8(0x09CF)));
     }
+#undef REC
+    uint8_t h = bus_wram_read8(0x0426);                     /* 94CF */
+    bus_wram_write8(0x0426, (uint8_t)((h & ~0x03) | (bus_wram_read8(0x19A5) & 0x03)));
 
-    /* Read cursor sprite pointer from DATA_0094E6 table in ROM.
-     * Table is at $00:94E6, each entry is 2 bytes (16-bit pointer). */
-    uint16_t tool_idx = tool & 0x00FF;
-    uint16_t sprite_ptr = bus_read16(0x00, 0x94E6 + tool_idx * 2);
-    uint16_t next_ptr = bus_read16(0x00, 0x94E6 + tool_idx * 2 + 2);
-
-    /* Compute animation frame count */
-    uint16_t frame_count = next_ptr - sprite_ptr - 3;
-    bus_wram_write16(0x19A3, frame_count);
-
-    /* Read sprite X/Y offset and flags from frame data */
-    uint8_t palette_page = (uint8_t)(bus_wram_read16(0x19A2) >> 8);
-    bus_wram_write8(0x19A2 + 1, (uint8_t)(tool >> 8));  /* Save high byte */
-
-    /* Frame data byte 0: cursor X offset */
-    int8_t x_off_raw = (int8_t)bus_read8(0x00, sprite_ptr);
-    /* Frame data byte 1: cursor Y offset */
-    int8_t y_off_raw = (int8_t)bus_read8(0x00, sprite_ptr + 1);
-    /* Frame data byte 2+: tile info (flags byte, then tile data) */
-
-    /* Apply X offset to cursor position */
-    int16_t cursor_x = (int16_t)bus_wram_read16(0x04DC);
-    /* Sign-extend: ASL; CMP #$80; ROR pattern = arithmetic shift right trick
-     * This converts unsigned with bit7=sign to proper signed */
-    int16_t x_disp = x_off_raw;
-    uint8_t oam_x = (uint8_t)((cursor_x + x_disp) & 0xFF);
-    bus_wram_write8(OAM_BUF + 0, oam_x);
-
-    /* Track X bit 8 for upper OAM */
-    uint8_t x_bit8 = 0;
-    int16_t full_x = cursor_x + x_disp;
-    if (full_x < 0 || full_x >= 256) x_bit8 = 1;
-
-    /* Check bit 7 of x_off for palette flag */
-    uint8_t x_flag = bus_read8(0x00, sprite_ptr) & 0x80;
-    uint8_t pal_1996 = 0;
-    if (x_flag) pal_1996 = x_flag;
-    pal_1996 |= (uint8_t)bus_wram_read16(0x1996);
-    bus_wram_write8(0x1996, pal_1996);
-
-    /* Apply Y offset to cursor position */
-    int16_t cy = (int16_t)bus_wram_read16(0x04DE);
-    int16_t y_disp = y_off_raw;
-    uint8_t oam_y = (uint8_t)((cy + y_disp) & 0xFF);
-    bus_wram_write8(OAM_BUF + 1, oam_y);
-
-    /* Y bit 8 for upper OAM (combined with X bit8) */
-    uint8_t y_bit8 = 0;
-    int16_t full_y = cy + y_disp;
-    if (y_off_raw < 0 && full_y < 0) y_bit8 = 2;  /* bit 1 of upper OAM */
-    uint8_t upper_bits = x_bit8 | y_bit8;
-    bus_wram_write8(0x19A5, upper_bits);
-
-    /* Check for special pencil cursor (sprite_ptr == DATA_009515) */
-    if (sprite_ptr == 0x9515) {
-        uint16_t eb8 = bus_wram_read16(0x0EB8);
-        if (eb8 == 0) {
-            uint8_t pal_row = bus_wram_read8(0x00A6);
-            if (pal_row < 0x70) goto normal_tile;
-        }
-        /* Use special pencil tile */
-        bus_wram_write8(OAM_BUF + 2, 0x6C);  /* Pencil tile */
-        bus_wram_write8(OAM_BUF + 3, bus_wram_read8(0x09CF));
-        goto set_upper_oam;
-    }
-
-normal_tile:
-    /* Handle animated cursors */
-    if (frame_count == 0) goto static_cursor;
-
-    /* Advance animation */
-    {
-        uint8_t anim_counter = bus_wram_read8(0x1998);
-        uint8_t anim_limit = bus_read8(0x00, sprite_ptr + 2);  /* Flags byte = frame count */
-        if (anim_counter >= anim_limit) {
-            bus_wram_write8(0x1998, 0x00);
-            uint8_t frame_idx = bus_wram_read8(0x199A) + 1;
-            if (frame_idx >= (frame_count & 0xFF)) frame_idx = 0;
-            bus_wram_write8(0x199A, frame_idx);
-        }
-    }
-
-    /* Check if 1996 flag triggers animation advance */
-    {
-        uint8_t fl = bus_wram_read8(0x1996);
-        if (fl != 0) {
-            uint8_t c = bus_wram_read8(0x1998) + 1;
-            bus_wram_write8(0x1998, c);
-        }
-    }
-
-    /* Read tile from animation frame */
-    {
-        uint8_t frame_idx = bus_wram_read8(0x199A);
-        uint16_t tile_offset = sprite_ptr + 3 + frame_idx;
-        uint8_t tile = bus_read8(0x00, tile_offset);
-        bus_wram_write8(OAM_BUF + 2, tile);
-
-        uint8_t prop = bus_wram_read8(0x19A2) | bus_wram_read8(0x09CF);
-        bus_wram_write8(OAM_BUF + 3, prop);
-        goto set_upper_oam;
-    }
-
-static_cursor:
-    /* Static cursor — read tile from byte 3 of frame data */
-    {
-        uint8_t tile = bus_read8(0x00, sprite_ptr + 3);
-        bus_wram_write8(OAM_BUF + 2, tile);
-
-        uint8_t prop = bus_wram_read8(0x19A2) | bus_wram_read8(0x09CF);
-        bus_wram_write8(OAM_BUF + 3, prop);
-    }
-
-set_upper_oam:
-    /* Write upper OAM bits for sprite 0 */
-    {
-        uint8_t upper = bus_wram_read8(OAM_HI_BUF);
-        upper = (upper & ~0x03) | (bus_wram_read8(0x19A5) & 0x03);
-        bus_wram_write8(OAM_HI_BUF, upper);
-    }
-
-    /* Restore saved state */
-    bus_wram_write16(0x1996, saved_1996);
+    bus_wram_write16(0x1996, saved_1996);                   /* PLA x2; STA */
+    g_cpu.Y = y;
+    CPU_SET_A16(saved_1996);
+    cpu_set_p(saved_p);                                     /* PLP */
 }
 
 /* ========================================================================
