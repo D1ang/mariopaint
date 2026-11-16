@@ -295,30 +295,6 @@ void mp_00BA78(void) {
 }
 
 /* ========================================================================
- * $00:DE8E — Load custom stamp display buffer
- *
- * Copies $800 bytes of stamp graphics from ROM $05:F800 to the
- * stamp display buffer, then initializes palette rows.
- * ======================================================================== */
-void mp_00DE8E(void) {
-    /* Copy stamp graphics */
-    for (int x = 0x07FE; x >= 0; x -= 2) {
-        uint16_t val = bus_read16(0x05, 0xF800 + x);
-        bus_wram_write16(0x1A58 + x, val);  /* Custom stamp GFX buffer */
-    }
-
-    /* Set initial palette row */
-    bus_wram_write16(0x00A6, 0x00F0);
-
-    /* Initialize 16 palette rows (0-15) */
-    for (int i = 0x000F; i >= 0 && !g_quit; i--) {
-        bus_wram_write16(0x112C, i);
-        func_table_call(0x00E0D4);  /* Compute palette row */
-        func_table_call(0x00DF1C);  /* Store palette data */
-    }
-}
-
-/* ========================================================================
  * $00:E25C — SRAM validation and clear
  *
  * Checks SRAM header at $70:07C0. If invalid, clears SRAM.
@@ -407,10 +383,9 @@ void mp_00F39E(void) {
         bus_wram_write16(0x09E4 + x, 0xFFFF);
     }
 
+    op_lda_imm16(0x0050);                                   /* A is $F921's input */
     bus_wram_write16(0x0C28, 0x0050);
-
-    /* Call palette row init */
-    func_table_call(0x00F921);
+    call_jsr(0x00F921);
 
     bus_wram_write16(0x0C32, 0x0001);
     bus_wram_write16(0x09E0, 0x0000);
@@ -534,7 +509,6 @@ void mp_register_helpers(void) {
     func_table_register(0x00B66C, mp_00B66C);
     func_table_register(0x00B6F4, mp_00B6F4);
     func_table_register(0x00BA78, mp_00BA78);
-    func_table_register(0x00DE8E, mp_00DE8E);
     func_table_register(0x00E25C, mp_00E25C);
     func_table_register(0x00E64F, mp_00E64F);
     func_table_register(0x00F39E, mp_00F39E);

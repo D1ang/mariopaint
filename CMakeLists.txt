@@ -31,6 +31,7 @@ add_library(mp_game STATIC
     src/recomp/mp_title.c
     src/recomp/mp_helpers.c
     src/recomp/mp_canvasclick.c
+    src/recomp/mp_stampbar.c
     src/recomp/mp_titleloop.c
     src/recomp/mp_interact.c
     src/recomp/mp_tools.c

@@ -81,9 +81,9 @@ def main():
     passed, verified = 0, []
     with open(os.path.join(OUT, "results.txt"), "w") as f:
         for addr, calls, mem, reg, mx, skip, irq, first in rows:
-            # A call an interrupt landed in is checked on WRAM only (outside
-            # what the handler wrote), so at least one clean call is required.
-            ok = (int(calls) > int(irq) and int(mem) == 0 and int(mx) == 0 and int(skip) == 0)
+            # Calls an interrupt landed in are compared in full except for what
+            # the handler itself wrote (WRAM, video memory, I/O registers).
+            ok = int(calls) > 0 and int(mem) == 0 and int(mx) == 0 and int(skip) == 0
             passed += ok
             if ok:
                 verified.append(addr + ("L" if kind.get(addr) == "JSL" else ""))

@@ -178,6 +178,9 @@ void mp_008B3C(void);  /* Cursor movement wrapper */
 
 /* Canvas Interaction (mp_interact.c) */
 void mp_register_interact(void);
+void mp_register_stampbar(void);
+void mp_00DE8E(void); void mp_00E0D4(void); void mp_00DF1C(void);
+void mp_00DF2C(void); void mp_00DFC4(void); void mp_00DF95(void); void mp_00E167(void);
 void mp_009001(void);  /* Hover grid: find the cell under the cursor */
 void mp_009107(void);  /* Hover grid: set/clear a cell highlight */
 void mp_0091C7(void);  /* Cursor zone check */

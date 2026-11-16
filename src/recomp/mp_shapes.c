@@ -723,22 +723,6 @@ void mp_018D35(void) {
 }
 
 /* ========================================================================
- * $00:DF2C / $00:DFC4 — Palette entry read/process
- *
- * Sub-routines of $00DF1C that read and process individual
- * palette entries from the tile data.
- * ======================================================================== */
-void mp_00DF2C(void) {
-    /* Read one palette entry's tile data into temp buffers.
-     * Complex bitplane extraction — dispatch to original. */
-}
-
-void mp_00DFC4(void) {
-    /* Process and store the extracted color data.
-     * Computes final SNES CGRAM color values. */
-}
-
-/* ========================================================================
  * $01:D75B — Stamp tile DMA
  *
  * Queues DMA for stamp tile graphics.
@@ -766,6 +750,4 @@ void mp_register_shapes(void) {
     func_table_register(0x00A0EB, mp_00A0EB);
     func_table_register(0x0082D5, mp_0082D5);
     func_table_register(0x018D35, mp_018D35);
-    func_table_register(0x00DF2C, mp_00DF2C);
-    func_table_register(0x00DFC4, mp_00DFC4);
 }

@@ -241,61 +241,6 @@ song_restore:
 }
 
 /* ========================================================================
- * $00:E0D4 — Compute palette color data from ROM
- *
- * Reads tile graphics data from ROM (bank $0A or SRAM) and
- * extracts the color information for the current palette row
- * and column ($112C).
- * ======================================================================== */
-void mp_00E0D4(void) {
-    uint16_t pal = bus_wram_read16(0x00A6);
-    uint8_t src_bank;
-    uint16_t src_addr;
-
-    if (pal == 0x00F0) {
-        /* Custom stamps — read from SRAM */
-        src_addr = 0x0000;  /* SRAM_MPAINT_Global_SavedSpecialStampsGFX */
-        src_bank = 0x70;
-    } else {
-        /* Standard palette — read from ROM bank $0A */
-        if (pal >= 0x0070) pal += 0x0010;
-        src_addr = (pal << 7) + 0x8000;
-        src_bank = 0x0A;
-    }
-
-    /* Compute tile offset from column index $112C */
-    uint16_t col = bus_wram_read16(0x112C);
-    uint16_t row_ofs = (col & 0x0008) << 5;  /* Row: 0 or $100 */
-    uint16_t col_ofs = (col & 0x0007) << 6;  /* Col: 0-7 * $40 */
-    uint16_t tile_ofs = row_ofs + col_ofs;
-
-    /* Read 4 bitplanes of tile data and extract color info */
-    /* Each tile row has 2 bytes for bitplanes 0-1, then 2 bytes for bitplanes 2-3 */
-    for (int x = 0; x < 16; x += 2) {
-        uint16_t val = bus_read16(src_bank, src_addr + tile_ofs + x);
-        bus_wram_write16(0x1124 + x, val);
-    }
-    for (int x = 0; x < 16; x += 2) {
-        uint16_t val = bus_read16(src_bank, src_addr + tile_ofs + 0x10 + x);
-        bus_wram_write16(0x1134 + x, val);
-    }
-}
-
-/* ========================================================================
- * $00:DF1C — Store palette display data
- *
- * Processes the palette color data computed by E0D4 and stores
- * the results into the palette display buffers.
- * Iterates over 12 palette entries (indices 1-12).
- * ======================================================================== */
-void mp_00DF1C(void) {
-    for (int x = 1; x < 13; x++) {
-        func_table_call(0x00DF2C);  /* Read tile data for entry */
-        func_table_call(0x00DFC4);  /* Process and store color */
-    }
-}
-
-/* ========================================================================
  * $00:E233 — SRAM header computation
  *
  * Computes the expected SRAM header value for validation.
@@ -405,8 +350,6 @@ void mp_register_misc(void) {
     func_table_register(0x009CC7, mp_009CC7);
     func_table_register(0x009E76, mp_009E76);
     func_table_register(0x009760, mp_009760);
-    func_table_register(0x00E0D4, mp_00E0D4);
-    func_table_register(0x00DF1C, mp_00DF1C);
     func_table_register(0x00E233, mp_00E233);
     func_table_register(0x00E6DA, mp_00E6DA);
     func_table_register(0x0082A7, mp_0082A7);
