@@ -24,7 +24,8 @@ tools/intercept_bisect.py is the check for callers that read them.
 
   py tools/conformance.py <rom> [--update]
 
-Prints "conformance: P/N pass". Per-function lines go to scratch/conf/results.txt.
+Runs every scenario in canvas_tour.SCENARIOS (in parallel) and sums each
+routine's counts; --scenario NAME checks one. Prints "conformance: P/N pass". Per-function lines go to scratch/conf/results.txt.
 tools/conformance_baseline.txt holds the pass count; the run exits 1 if it drops
 (--update rewrites it).
 """
@@ -62,45 +63,69 @@ def snaps(d):
     return {f: open(os.path.join(d, f), "rb").read() for f in sorted(os.listdir(d)) if f.endswith(".snap")}
 
 
-def main():
-    args = sys.argv[1:]
-    update = "--update" in args
-    rom = [a for a in args if a != "--update"][0]
-
-    oracle = os.path.join(OUT, "oracle")
-    r = canvas_tour.run(rom, canvas_tour.BOTTOM, oracle, real=True, extra_env={"MP_PROFILE": "5000"})
+def check_scenario(rom, name):
+    """Oracle run (profile) then lockstep-validated run of one tour scenario."""
+    pts = canvas_tour.SCENARIOS[name]
+    oracle = os.path.join(OUT, name, "oracle")
+    r = canvas_tour.run(rom, pts, oracle, real=True, extra_env={"MP_PROFILE": "5000"})
     prof = re.findall(r"^PROF (\w{6}) +\d+ +\w\w (JSR|JSL) .*recompiled", r.stderr, re.M)
-    # Every routine the tour executes, ported or not (tools/progress.py reads it).
-    os.makedirs(OUT, exist_ok=True)
-    with open(os.path.join(OUT, "executed.txt"), "w") as f:
-        f.write("\n".join(sorted(set(re.findall(r"^PROF (\w{6}) ", r.stderr, re.M)))) + "\n")
+    executed = set(re.findall(r"^PROF (\w{6}) ", r.stderr, re.M))
     spec = ",".join([a + ("L" if k == "JSL" else "") for a, k in prof if a not in FRAME_DRIVERS] +
                     [a for a in JUMP_ENTERED if a not in dict(prof)])
-
-    checked = os.path.join(OUT, "validated")
-    r = canvas_tour.run(rom, canvas_tour.BOTTOM, checked, real=True, extra_env={"MP_VALIDATE": spec,
-                                                                              "SNESRECOMP_VALIDATE_MAX": "3000"})
+    checked = os.path.join(OUT, name, "validated")
+    r = canvas_tour.run(rom, pts, checked, real=True, extra_env={"MP_VALIDATE": spec,
+                                                                 "SNESRECOMP_VALIDATE_MAX": "3000"})
     if snaps(oracle) != snaps(checked):
-        print("WARNING: validation changed the run (snapshots differ from the oracle)")
-
+        print(f"WARNING: validation changed the {name} run (snapshots differ from the oracle)")
     rows = re.findall(r"^VALIDATE (\w{6}) calls=(\d+) mem_fail=(\d+) reg_fail=(\d+) mx_fail=(\d+) skipped=(\d+) "
                       r"irq=(\d+)(.*)$", r.stderr, re.M)
-    kind = dict(prof)
+    return dict(prof), executed, rows
+
+
+def main():
+    from concurrent.futures import ThreadPoolExecutor
+    args = sys.argv[1:]
+    update = "--update" in args
+    rom = [a for a in args if not a.startswith("--")][0]
+    names = list(canvas_tour.SCENARIOS)
+    if "--scenario" in args:
+        names = [args[args.index("--scenario") + 1]]
+
+    with ThreadPoolExecutor(max_workers=min(len(names), os.cpu_count() or 2)) as pool:
+        outs = list(pool.map(lambda n: check_scenario(rom, n), names))
+
+    # Sum each routine's counts over the scenarios; keep the first failure.
+    kind, executed, total = {}, set(), {}
+    for name, (prof, exe, rows) in zip(names, outs):
+        kind.update(prof)
+        executed |= exe
+        for addr, calls, mem, reg, mx, skip, irq, first in rows:
+            t = total.setdefault(addr, [0, 0, 0, 0, 0, 0, ""])
+            for k, v in enumerate((calls, mem, reg, mx, skip, irq)):
+                t[k] += int(v)
+            if not t[6] and int(mem):
+                t[6] = f" [{name}]{first}"
+    os.makedirs(OUT, exist_ok=True)
+    with open(os.path.join(OUT, "executed.txt"), "w") as f:
+        f.write("\n".join(sorted(executed)) + "\n")
+
     passed, verified = 0, []
     with open(os.path.join(OUT, "results.txt"), "w") as f:
-        for addr, calls, mem, reg, mx, skip, irq, first in rows:
+        for addr, (calls, mem, reg, mx, skip, irq, first) in total.items():
             # Calls an interrupt landed in are compared in full except for what
             # the handler itself wrote (WRAM, video memory, I/O registers).
-            ok = int(calls) > 0 and int(mem) == 0 and int(mx) == 0 and int(skip) == 0
+            ok = calls > 0 and mem == 0 and mx == 0 and skip == 0
             passed += ok
             if ok and addr not in TIMING_SENSITIVE:
                 verified.append(addr + ("L" if kind.get(addr) == "JSL" else ""))
             f.write(f"{addr} {'PASS' if ok else 'FAIL'} calls={calls} mem_fail={mem} reg_fail={reg} mx_fail={mx} "
                     f"skipped={skip} irq={irq}{first}\n")
+    rows = total
     # MP_TIMED format: what main.c's k_verified should hold.
     with open(os.path.join(OUT, "verified.txt"), "w") as f:
         f.write(",".join(sorted(verified)) + "\n")
-    print(f"conformance: {passed}/{len(rows)} pass (details: scratch/conf/results.txt)")
+    print(f"conformance: {passed}/{len(rows)} pass over {len(names)} scenarios "
+          f"(details: scratch/conf/results.txt)")
 
     base = int(open(BASELINE).read().split()[0]) if os.path.exists(BASELINE) else 0
     if update or not os.path.exists(BASELINE):
