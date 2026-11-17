@@ -7,6 +7,11 @@ scratch/conf/<scenario>/oracle).
 Prints one line per scenario and exits 1 if any shot differs. The native
 build runs the routines in main.c's k_verified natively, so this is the
 check that they behave in the real game as they did under validation.
+
+A difference is a signal, not proof of a bug: native routines finish
+faster than on the SNES (fewer lag frames), so frame-counted animations
+may be a step ahead; that is accepted. To tell timing from logic, hand
+routines back with MP_INTERP_FUNCS and see what makes the shot match.
 """
 import os, sys
 from concurrent.futures import ThreadPoolExecutor

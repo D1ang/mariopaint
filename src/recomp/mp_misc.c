@@ -304,19 +304,6 @@ void mp_0082A7(void) {
 }
 
 /* ========================================================================
- * $01:E393 — Indexed subroutine dispatch (proper implementation)
- *
- * Reads a 16-bit address from a table and calls it.
- * Used by the animation engine for frame command dispatch.
- * ======================================================================== */
-void mp_01E393_impl(void) {
-    /* A = index, table pointer on stack.
-     * In practice, the callers set up specific dispatch tables.
-     * The actual behavior is: read word from table[A*2+1], use as sub-call.
-     * Since this is deeply tied to stack layout, register as passthrough. */
-}
-
-/* ========================================================================
  * Title screen / canvas transition helpers
  * ======================================================================== */
 

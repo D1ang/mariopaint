@@ -121,21 +121,11 @@ static void mp_01DA73(uint16_t addr) {
     bus_wram_write8(addr, (v & 0x80) ? (uint8_t)(-(v & 0x7F)) : (uint8_t)(v & 0x7F));
 }
 
-void mp_01D9E1(void) {
-    if (bus_wram_read8(MOUSE_ACTIVE) != 0) return;
-    bus_wram_write8(MOUSE_ACTIVE, 0x01);
+static void mouse_fix_disp(int x);
 
-    if (bus_wram_read8(MOUSE_ENABLE) == 0) {
-        for (int i = 0; i < 2; i++) {
-            bus_wram_write8(MOUSE_BUTTONS + i, 0);
-            bus_wram_write8(MOUSE_X_DISP + i, 0);
-            bus_wram_write8(MOUSE_Y_DISP + i, 0);
-        }
-        bus_wram_write8(MOUSE_ACTIVE, 0x00);
-        return;
-    }
-
-    /* $01:DA0D — wait out the auto-read before touching $4218 or $4016.
+/* $01:DA0D — read both ports (X = 1, then 0). */
+static void mouse_read_ports(void) {
+    /* Wait out the auto-read before touching $4218 or $4016.
      * Native-driven frames finish it before NMI, so this only spins in the
      * timed loop. */
     while ((bus_read8(0x00, 0x4212) & 1) && recomp_timed_spin(64)) {}
@@ -161,8 +151,7 @@ void mp_01D9E1(void) {
             bits = (uint16_t)((bits << 1) | (bus_read8(0x00, 0x4016 + x) & 1));
         bus_wram_write8(MOUSE_Y_DISP + x, (uint8_t)(bits >> 8));
         bus_wram_write8(MOUSE_X_DISP + x, (uint8_t)bits);
-        mp_01DA73(MOUSE_X_DISP + x);
-        mp_01DA73(MOUSE_Y_DISP + x);
+        mouse_fix_disp(x);                                  /* JSR $DA68 */
 
         /* $01:DA88 */
         uint8_t held = bus_wram_read8(HELD_P1 + 2 * x);
@@ -175,6 +164,36 @@ void mp_01D9E1(void) {
         mp_01DAF9(x);
     }
 
+}
+
+/* $01:DA68 — both displacement bytes of port X to two's complement. */
+static void mouse_fix_disp(int x) {
+    mp_01DA73(MOUSE_X_DISP + x);
+    mp_01DA73(MOUSE_Y_DISP + x);
+}
+
+/* Entries for ROM callers (8-bit index registers; port number in X). */
+void mp_01DA0D_entry(void) { mouse_read_ports(); g_cpu.X = 0xFF; }
+void mp_01DA68_entry(void) { mouse_fix_disp(g_cpu.X & 0xFF); }
+void mp_01DA73_entry(void) { mp_01DA73((uint16_t)(MOUSE_X_DISP + (g_cpu.X & 0xFF))); }
+void mp_01DABF_entry(void) { mp_01DABF(g_cpu.X & 0xFF); }
+void mp_01DAF9_entry(void) { mp_01DAF9(g_cpu.X & 0xFF); }
+
+void mp_01D9E1(void) {
+    if (bus_wram_read8(MOUSE_ACTIVE) != 0) return;
+    bus_wram_write8(MOUSE_ACTIVE, 0x01);
+
+    if (bus_wram_read8(MOUSE_ENABLE) == 0) {
+        for (int i = 0; i < 2; i++) {
+            bus_wram_write8(MOUSE_BUTTONS + i, 0);
+            bus_wram_write8(MOUSE_X_DISP + i, 0);
+            bus_wram_write8(MOUSE_Y_DISP + i, 0);
+        }
+        bus_wram_write8(MOUSE_ACTIVE, 0x00);
+        return;
+    }
+
+    mouse_read_ports();                                     /* JSR $DA0D */
     bus_wram_write8(MOUSE_ACTIVE, 0x00);
 }
 
@@ -345,6 +364,11 @@ void mp_01DCB9(void) {
  * Register all input/cursor functions.
  * ======================================================================== */
 void mp_register_input(void) {
+    func_table_register(0x01DA0D, mp_01DA0D_entry);
+    func_table_register(0x01DA68, mp_01DA68_entry);
+    func_table_register(0x01DA73, mp_01DA73_entry);
+    func_table_register(0x01DABF, mp_01DABF_entry);
+    func_table_register(0x01DAF9, mp_01DAF9_entry);
     func_table_register(0x01D9E1, mp_01D9E1);
     func_table_register(0x00815B, mp_00815B);
     func_table_register(0x008187, mp_008187);

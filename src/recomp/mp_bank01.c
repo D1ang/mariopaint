@@ -850,6 +850,7 @@ void mp_01E238(void) {
  * Register all Bank 01 recompiled functions.
  * ======================================================================== */
 void mp_register_bank01(void) {
+    func_table_register(0x01E393, mp_01E393);
     func_table_register(0x01E024, mp_01E024);
     func_table_register(0x01E033, mp_01E033);
     func_table_register(0x01E042, mp_01E042);
@@ -872,4 +873,23 @@ void mp_register_bank01(void) {
     func_table_register(0x01E747, mp_01E747);
     func_table_register(0x01E794, mp_01E794);
     func_table_register(0x01E895, mp_01E895);
+}
+
+/* ========================================================================
+ * $01:E393 — Jump through the table that follows the JSL
+ *
+ * Callers do JSL $01E393 with A = index, followed by a table of 16-bit
+ * handler addresses. The routine reads entry A after the return address
+ * (which points at the JSL's last byte) and stores handler-1 there, so
+ * the RTL lands in the handler, in the caller's bank. Only for ROM
+ * callers: translated callers dispatch with a switch.
+ * ======================================================================== */
+void mp_01E393(void) {
+    uint16_t s = g_cpu.S;                                   /* return at S+1..S+3 */
+    uint32_t ret = bus_wram_read16((uint16_t)(s + 1)) |
+                   ((uint32_t)bus_wram_read8((uint16_t)(s + 3)) << 16);
+    uint16_t y = (uint16_t)(((CPU_A16() & 0x00FF) << 1) + 1);
+    uint16_t target = read_long16(ret + y);                 /* LDA [$08],y */
+    bus_wram_write16((uint16_t)(s + 1), (uint16_t)(target - 1));   /* STA; DEC */
+    CPU_SET_A16(target);
 }

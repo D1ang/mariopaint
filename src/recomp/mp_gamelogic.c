@@ -7,7 +7,6 @@
  *   $00878F — Animation frame check
  *   $009378 — Cursor sprite rendering (reads sprite frames from ROM)
  *   $01E8F6 — Empty tile row optimization check
- *   $01E393 — Indexed subroutine dispatch helper
  *
  * Reference: Yoshifanatic1/Mario-Paint-Disassembly
  */
@@ -62,23 +61,6 @@ use_d0:
 
 done:
     return;
-}
-
-/* ========================================================================
- * $01:E393 — Indexed subroutine dispatch helper
- *
- * Takes A (8-bit index), reads a 16-bit pointer from the address
- * on stack + index*2+1, stores it. Used for indexed jump tables.
- *
- * This is a complex stack-manipulation routine. In practice, it's
- * used for animation frame dispatch. We implement it as a helper
- * that reads from ROM.
- * ======================================================================== */
-void mp_01E393(void) {
-    /* This routine is called with A = index and a pointer on the stack.
-     * In practice, the callers that use this are complex animation
-     * dispatchers. For now, register it so func_table_call doesn't no-op,
-     * but the actual behavior depends on calling context. */
 }
 
 /* ========================================================================

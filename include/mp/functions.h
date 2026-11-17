@@ -180,6 +180,7 @@ void mp_008B3C(void);  /* Cursor movement wrapper */
 void mp_register_interact(void);
 void mp_register_stampbar(void);
 void mp_register_plot(void);
+void mp_01E393(void);
 void mp_009082(void); void mp_00B23C(void); void mp_00B25E(void); void mp_00B1C2(void); void mp_00A0B3(void);
 void mp_00DE8E(void); void mp_00E0D4(void); void mp_00DF1C(void);
 void mp_00DF2C(void); void mp_00DFC4(void); void mp_00DF95(void); void mp_00E167(void);
