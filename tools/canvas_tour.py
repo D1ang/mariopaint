@@ -8,7 +8,7 @@ ground truth to compare against.
   py tools/canvas_tour.py <rom> [--real] [--out DIR] [--scenario NAME] [x,y ...]
 
 With no points, clicks every bottom-bar slot. --scenario picks one of
-SCENARIOS (canvas, music, animation, menu, view, gnat). Screens land in DIR (default
+SCENARIOS (canvas, music, animation, menu, view, gnat, gnatpause). Screens land in DIR (default
 scratch/tour[_real]) as NN_x_y.png, plus a .snap (WRAM/VRAM/CGRAM) per shot.
 """
 import os, subprocess, sys, glob, shutil
@@ -42,15 +42,20 @@ SCENARIOS = {
     "view": [MODE_BAR, (192, 212), (128, 112), (128, 112)],
     "gnat": [MODE_BAR, (216, 212), (128, 112), (100, 100), (150, 80), (60, 150),
              (200, 120), (128, 60), (90, 170), (170, 40), (128, 128)],
+    # Gnat Attack's pause menu (right button): resume (the cursor starts on
+    # the middle choice), swat a little, pause again and quit (lowest choice).
+    "gnatpause": [MODE_BAR, (216, 212), (128, 112), (100, 100), (128, 112, "R"), (128, 112),
+                  (150, 80), (128, 112, "R"), (128, 136), (128, 112), (60, 60)],
 }
 
 
 def run(rom, points, out, real=False, extra_env=None):
     script, shots = list(TITLE), []
     f = CANVAS_AT
-    for x, y in points:
+    for x, y, *btn in points:
+        b = btn[0] if btn else "L"
         script.append(f"{f}:@{x}:@{y}:0:30")
-        script.append(f"{f + 30}:@{x}:@{y}:L:3")
+        script.append(f"{f + 30}:@{x}:@{y}:{b}:3")
         script.append(f"{f + 33}:@{x}:@{y}:0:{STEP - 33}")
         shots.append(f + STEP - 5)
         f += STEP
@@ -71,7 +76,8 @@ def run(rom, points, out, real=False, extra_env=None):
         f.write(r.stdout + r.stderr)
     pngs = sorted(glob.glob(os.path.join(out, "screenshot_*.png")))
     snaps = sorted(glob.glob(os.path.join(out, "s_f*.snap")))
-    names = ["00_canvas"] + [f"{i + 1:02d}_{x}_{y}" for i, (x, y) in enumerate(points)]
+    names = ["00_canvas"] + [f"{i + 1:02d}_{p[0]}_{p[1]}" + ("_" + p[2] if len(p) > 2 else "")
+                             for i, p in enumerate(points)]
     for name, png, snap in zip(names, pngs, snaps):
         shutil.move(png, os.path.join(out, name + ".png"))
         shutil.move(snap, os.path.join(out, name + ".snap"))

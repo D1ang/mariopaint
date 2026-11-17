@@ -485,22 +485,21 @@ void mp_018F52(void) {
 }
 
 /* ========================================================================
- * $01:F825 — Load toolbar display data
- *
- * Copies 8 bytes of toolbar display data from ROM bank $0D
- * (DATA_0DEB22) to the toolbar buffer at $1A10.
+ * $01:F825 — Load one object's display data: A = object. Four words from
+ * $0D:EB22 + 8A go to $1A10 + (8A & $FF) (the ROM masks only the
+ * destination index: TAX; AND #$00FF; TAY). DB is 0 meanwhile.
  * ======================================================================== */
 void mp_01F825(void) {
-    uint16_t slot = CPU_A16();
-    uint16_t src = slot * 8;
-    uint16_t dst = slot * 2;
-
+    uint16_t x = (uint16_t)(CPU_A16() << 3);
+    uint16_t y = x & 0x00FF;
     for (int i = 0; i < 4; i++) {
-        uint16_t val = bus_read16(0x0D, 0xEB22 + src);
-        bus_wram_write16(0x1A10 + dst, val);
-        src += 2;
-        dst += 2;
+        bus_wram_write16((uint16_t)(0x1A10 + y), read_long16(0x0DEB22 + x));
+        x = (uint16_t)(x + 2);
+        y = (uint16_t)(y + 2);
     }
+    g_cpu.X = x;
+    g_cpu.Y = y;
+    CPU_SET_A16(0);
 }
 
 /* ========================================================================

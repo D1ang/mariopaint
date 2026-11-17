@@ -467,7 +467,229 @@ void mp_01C5F8(void) {
 #undef G16
 #undef S16
 
+/* ---- Gnat Attack pause menu ($01:C622 and helpers). Absolute addresses go
+ * through DB (the game's work bank), long ones to bank 0 / $7E. */
+#define G16(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+#define S16(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+
+/* Lockstep validation runs a native body on a copy of the machine where
+ * frames do not advance (the frame driver returns at once and marks the
+ * call as skipped), so a loop that waits for input would never end. */
+extern bool g_recomp_validating, g_recomp_frame_touched;
+static inline bool frames_frozen(void) { return g_recomp_validating && g_recomp_frame_touched; }
+
+static inline uint16_t xba16(uint16_t v) { return (uint16_t)((v << 8) | (v >> 8)); }
+
+/* $01:C9CE: hide all 32 sprites ($F400 = Y 244), high table $5555. */
+void mp_01C9CE(void) {
+    for (int x = 0x3E; x >= 0; x -= 2)
+        bus_wram_write16((uint16_t)(0x0226 + x), 0xF400);
+    bus_wram_write16(0x0426, 0x5555);
+    bus_wram_write16(0x0428, 0x5555);
+    bus_wram_write16(0x0446, 0x0000);
+    g_cpu.X = 0xFFFE;
+    CPU_SET_A16(0x0000);
+    g_cpu.flag_Z = true;
+    g_cpu.flag_N = false;
+}
+
+/* $01:C9EF: build the HDMA table at $7E:4000 that dims the screen behind
+ * the menu: $7F:000A - 1 lines plain (in runs of at most $7F), then the
+ * entries at $01:CA78 with $7F:0008 added to each value pair (capped at
+ * $FF). Entry byte h: < $80 one line pair, >= $80 repeat mode, h & $7F
+ * pairs; 0 ends the table. 8-bit A, 16-bit X. */
+void mp_01C9EF(void) {
+    uint8_t p = cpu_get_p();                                /* PHP PHB */
+    uint8_t db = g_cpu.DB;
+    op_sep(0x20);
+    g_cpu.DB = 0x01;
+    uint16_t x = 0;
+#define T(v) bus_write8(0x7E, (uint16_t)(0x4000 + x), (uint8_t)(v)), x++
+    uint8_t a = (uint8_t)(bus_read8(0x7F, 0x000A) - 1);
+    while (a >= 0x7F) {                                     /* $C9FF */
+        a = (uint8_t)(a - 0x7F);
+        T(0x7F); T(0x01); T(0x00);
+    }
+    if (a != 0) { T(a); T(0x01); T(0x00); }                 /* $CA1E */
+    uint8_t add = bus_read8(0x7F, 0x0008);
+    uint16_t y = 0;
+    for (;;) {                                              /* $CA38 */
+        a = bus_read8(0x01, (uint16_t)(0xCA78 + y));
+        if (a == 0) break;
+        bus_write8(0x7E, (uint16_t)(0x4000 + x), a);
+        if (a & 0x80) a = (uint8_t)(a - 1);
+        y++; x++;
+        do {                                                /* $CA46 */
+            for (int k = 0; k < 2; k++) {
+                unsigned v = (unsigned)bus_read8(0x01, (uint16_t)(0xCA78 + y)) + add;
+                T(v > 0xFF ? 0xFF : v);
+                y++;
+            }
+            a = (uint8_t)(a - 1);
+        } while (a & 0x80);
+    }
+    bus_write8(0x7E, (uint16_t)(0x4000 + x), 0x00);         /* $CA71 */
+#undef T
+    g_cpu.X = x;
+    g_cpu.Y = y;
+    CPU_SET_A8(0x00);
+    g_cpu.DB = db;                                          /* PLB PLP */
+    cpu_set_p(p);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+}
+
+/* $01:A274: frame the play field in the BG map at $7E:2800 with tile
+ * $2DC7: the two leftmost and rightmost columns, then the top two and
+ * bottom three rows. */
+void mp_01A274(void) {
+    for (uint16_t x = 0; x != 0x0800; x = (uint16_t)(x + 0x40)) {
+        write_long16(0x7E2800 + x, 0x2DC7);
+        write_long16(0x7E2802 + x, 0x2DC7);
+        write_long16(0x7E283C + x, 0x2DC7);
+        write_long16(0x7E283E + x, 0x2DC7);
+    }
+    for (uint16_t x = 0; x != 0x0040; x = (uint16_t)(x + 2)) {
+        write_long16(0x7E2800 + x, 0x2DC7);
+        write_long16(0x7E2840 + x, 0x2DC7);
+        write_long16(0x7E2E80 + x, 0x2DC7);
+        write_long16(0x7E2EC0 + x, 0x2DC7);
+        write_long16(0x7E2F00 + x, 0x2DC7);
+    }
+    g_cpu.X = 0x0040;
+    CPU_SET_A16(0x2DC7);
+    g_cpu.flag_C = true;
+    g_cpu.flag_Z = true;
+    g_cpu.flag_N = false;
+}
+
+/* $01:C95E: one frame of the menu: move its cursor ($0C/$0E) by the mouse,
+ * kept inside the box ($08/$0A + $67 x $6F), draw it and the three lever
+ * objects ($23-$25), then wait for the frame. */
+void mp_01C95E(void) {
+    call_jsr(0x01C9CE);
+    uint16_t nx = (uint16_t)(disp(0x04C6) + G16(0x000C));
+    uint16_t d = (uint16_t)(nx - G16(0x0008));
+    if (!(d & 0x8000) && ((uint16_t)(d - 0x0067) & 0x8000)) S16(0x000C, nx);
+    uint16_t ny = (uint16_t)(disp(0x04C8) + G16(0x000E));
+    d = (uint16_t)(ny - G16(0x000A));
+    if (!(d & 0x8000) && ((uint16_t)(d - 0x006F) & 0x8000)) S16(0x000E, ny);
+    g_cpu.X = G16(0x000C);
+    g_cpu.Y = G16(0x000E);
+    CPU_SET_A16(0x0136);
+    call_jsl(0x01F91E);
+    for (uint16_t o = 0x23; o <= 0x25; o++) { CPU_SET_A16(o); call_jsl(0x01F84F); }
+    call_jsl(0x01E2CE);
+}
+
+/* Restore what $C622 saved, PLP, and answer in carry: set = quit. */
+static void pause_exit(uint16_t saved446, uint8_t saved104, uint8_t p, bool quit) {
+    CPU_SET_A16(saved446);
+    bus_wram_write16(0x0446, saved446);
+    op_sep(0x20);
+    CPU_SET_A8(saved104);
+    bus_wram_write8(0x0104, saved104);
+    cpu_set_p(p);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+    g_cpu.flag_C = quit;
+}
+
+/* Lever animation: play sound $3F, flag the lever object, run the menu
+ * $40 more frames. */
+static void pull_lever(uint16_t flag_addr) {
+    CPU_SET_A16(0x003F);
+    call_jsl(0x01D368);
+    bus_wram_write16(flag_addr, 0xFFFF);
+    for (int n = 0x40; n > 0; n--) call_jsr(0x01C95E);
+}
+
+/* ---- $01:C622: the pause menu. Opens a 13x14-tile box (from $01:C7F2)
+ * near the swatter, dims the rest of the screen (HDMA table, $C9EF) and
+ * places the lever objects $23-$25 relative to it; then runs frames until
+ * a click on CONTINUE (carry clear: the field is redrawn) or EXIT (carry
+ * set). The top lever does nothing but animate. */
+void mp_01C622(void) {
+    uint8_t p = cpu_get_p();                                /* PHP */
+    uint8_t saved104 = bus_wram_read8(0x0104);              /* SEP #$20 */
+    bus_wram_write8(0x0104, 0x0F);                          /* main screen: BG1-4 only */
+    uint16_t saved446 = bus_wram_read16(0x0446);            /* REP #$20 */
+    op_rep(0x20);
+
+    uint16_t x = bus_wram_read16(0x04DC);
+    if (x < 0x0050) x = 0x0050;
+    if (x >= 0x00A8) x = 0x00A8;
+    x &= 0xFFF8;
+    S16(0x000C, x);
+    S16(0x0008, x - 0x0030);
+    uint16_t col = (uint16_t)((uint16_t)(x - 0x0030) >> 2);
+    uint16_t y = bus_wram_read16(0x04DE);
+    if (y < 0x0060) y = 0x0060;
+    if (y >= 0x0090) y = 0x0090;
+    y &= 0xFFF8;
+    S16(0x000E, y);
+    S16(0x000A, y - 0x0040);
+    uint16_t at = (uint16_t)((uint16_t)((uint16_t)(y - 0x0040) << 3) + col);
+
+    uint16_t src = 0;                                       /* PHB; DB = 1 */
+    for (int row = 0; row < 14; row++, at = (uint16_t)(at + 0x40))
+        for (uint16_t k = 0; k < 13; k++, src = (uint16_t)(src + 2))
+            write_long16(0x7E2800 + (uint16_t)(at + 2 * k), bus_read16(0x01, (uint16_t)(0xC7F2 + src)));
+    g_cpu.X = at;
+    g_cpu.Y = src;
+
+    call_jsl(0x01E2CE);
+    call_jsl(0x01DEB2);
+    bus_wram_write16(0x0220, 0x0001);
+    bus_wram_write8(0x0112, 0x02);                          /* HDMA channel 1 on */
+    call_jsr(0x01C9EF);
+    static const uint16_t lever_pos[3] = { 0x1A28, 0x1A30, 0x1A38 };
+    for (int i = 0; i < 3; i++) {
+        CPU_SET_A16(0x0023 + i);
+        call_jsl(0x01F825);
+        uint16_t ax = xba16((uint16_t)(G16(0x0008) >> 1));
+        bus_wram_write16(lever_pos[i], (uint16_t)(ax + bus_wram_read16(lever_pos[i])));
+        uint16_t ay = xba16(G16(0x000A));
+        bus_wram_write16((uint16_t)(lever_pos[i] + 2), (uint16_t)(ay + bus_wram_read16((uint16_t)(lever_pos[i] + 2))));
+    }
+    bus_wram_write16(0x04CA, 0x0000);
+
+    for (;;) {                                              /* $C73D */
+        if (bus_wram_read16(0x04CA) & 0x0020) {
+            uint16_t c = G16(0x000C), l = G16(0x0008);
+            uint16_t dx = (uint16_t)(c - l);
+            uint16_t dy = (uint16_t)(G16(0x000E) - G16(0x000A));
+            if (c >= l && dx < 0x0067 && dy >= 0x0008) {
+                if (dy < 0x001F) {                          /* top lever */
+                    bus_wram_write16(0x1A3D, 0xFFFF);
+                } else if (dy >= 0x0030 && dy < 0x0047) {   /* CONTINUE */
+                    pull_lever(0x1A2D);
+                    call_jsr(0x01C9CE);
+                    CPU_SET_A16(0x0057);
+                    call_jsl(0x01E033);
+                    call_jsr(0x01A274);
+                    call_jsl(0x01DEB2);
+                    bus_wram_write16(0x0220, 0xFFFF);
+                    pause_exit(saved446, saved104, p, false);
+                    return;
+                } else if (dy >= 0x0050 && dy < 0x0067) {   /* EXIT */
+                    pull_lever(0x1A35);
+                    pause_exit(saved446, saved104, p, true);
+                    return;
+                }
+            }
+        }
+        call_jsr(0x01C95E);                                 /* $C779 */
+        if (frames_frozen()) return;                        /* skipped anyway */
+    }
+}
+#undef G16
+#undef S16
+
 void mp_register_gnat(void) {
+    func_table_register(0x01C622, mp_01C622);
+    func_table_register(0x01C95E, mp_01C95E);
+    func_table_register(0x01C9CE, mp_01C9CE);
+    func_table_register(0x01C9EF, mp_01C9EF);
+    func_table_register(0x01A274, mp_01A274);
     func_table_register(0x01A5E4, mp_01A5E4);
     func_table_register(0x01C5F8, mp_01C5F8);
     func_table_register(0x01A54F, mp_01A54F);
