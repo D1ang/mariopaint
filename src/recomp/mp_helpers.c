@@ -80,7 +80,12 @@ void mp_01E20C(void) {
             val -= sub;
             bus_wram_write16(0x044C + yi, val);
         }
-        idx = 0;
+        /* STZ $044A, but the lookup uses the A that $E298 returns: its
+         * closing PLA/PLA leave the loop's last index, $6C, so this draw
+         * reads $044C + $D8 = $0524, past the table, as the ROM does. */
+        bus_wram_write16(0x044A, 0x0000);
+        CPU_SET_A16(bus_wram_read16(0x044C + 0x006C * 2));
+        return;
     }
 
     bus_wram_write16(0x044A, idx);
