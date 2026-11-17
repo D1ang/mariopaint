@@ -38,6 +38,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <ctype.h>
 
 /* Global quit flag — set by mp_01E2CE when window is closed */
 bool g_quit = false;
@@ -45,7 +46,8 @@ bool g_quit = false;
 /*
  * Recompiled functions that pass tools/conformance.py: every checked call
  * byte-identical to the ROM (WRAM, VRAM, CGRAM, OAM), none skipped. These run
- * natively by default. Regenerate with conformance.py (scratch/conf/verified.txt)
+ * natively by default. Suffix L = returns with RTL; F = waits for frames
+ * (checked frame by frame, runs as a framed intercept). Regenerate with conformance.py (scratch/conf/verified.txt)
  * and paste; never add a function here that has not passed.
  */
 static const char k_verified[] =
@@ -59,27 +61,41 @@ static const char k_verified[] =
     "00F1FD,00F39E,00F921,00FB5C,00FC93,00FD83,00FDFE,00FE54,"
     "0182B1,0182F6,018C43,018CB7,01962CL,019DFEL,01A274,01A30D,"
     "01A54F,01A5BB,01A5E4,01A819,01A8C4,01BC7B,01BD87,01BE40,"
-    "01C51D,01C9CE,01C9EF,01CA98,01CAAE,01D2BFL,01D308L,01D328L,"
-    "01D348L,01D368L,01D56DL,01D597L,01D9E1L,01DA0D,01DA68,01DA73,"
-    "01DABF,01DAF9,01DCB9L,01DDB8L,01DDE1L,01DE2DL,01DE97L,01DEB2L,"
-    "01DECDL,01DF25L,01DFC1,01DFD3L,01E024L,01E033L,01E042L,01E060L,"
-    "01E06FL,01E103L,01E1ABL,01E20CL,01E238L,01E2F3L,01E30EL,01E429L,"
-    "01E460L,01E500L,01E59BL,01E60CL,01E66BL,01E6CAL,01E6D0L,01E747L,"
-    "01E87BL,01E88AL,01E895L,01E8F6L,01E998L,01F825L,01F84FL,01F91EL,"
-    "01FA68L,0FC000L";
+    "01C51D,01C5F8F,01C622F,01C95EF,01C9CE,01C9EF,01CA98,01CAAE,"
+    "01D2BFL,01D308L,01D328L,01D348L,01D368L,01D56DL,01D597L,01D9E1L,"
+    "01DA0D,01DA68,01DA73,01DABF,01DAF9,01DCB9L,01DDB8L,01DDE1L,"
+    "01DE2DL,01DE97L,01DEB2L,01DECDL,01DF25L,01DFC1,01DFD3L,01E024L,"
+    "01E033L,01E042L,01E060L,01E06FL,01E103L,01E1ABL,01E20CL,01E238L,"
+    "01E2F3L,01E30EL,01E429L,01E460L,01E500L,01E59BL,01E60CL,01E66BL,"
+    "01E6CAL,01E6D0L,01E747L,01E87BL,01E88AL,01E895L,01E8F6L,01E998L,"
+    "01F825L,01F84FL,01F91EL,01FA68L,0FC000L";
 
-/* "01D9E1L,008B48" -> fn(addr, is_long) for each; suffix L = returns with RTL. */
-static void add_addr_list(const char *list, void (*fn)(uint32_t, bool)) {
+/* Routines that present a frame: $01:E2CE waits for the NMI; $01:E794 and
+ * $01:E7C9 fade the screen in/out over several frames. */
+static const char k_frame_drivers[] = "01E2CEL,01E794L,01E7C9L";
+
+/* "01D9E1L,008B48" -> fn(addr, is_long) for each; suffix L = returns with RTL,
+ * F = waits for frames (an intercept list gives those to framed_fn). */
+static void add_addr_list2(const char *list, void (*fn)(uint32_t, bool), void (*framed_fn)(uint32_t, bool)) {
     while (list && *list) {
-        char *end;
-        unsigned long addr = strtoul(list, &end, 16);
-        if (end == list) break;
-        bool is_long = (*end == 'L' || *end == 'l');
-        if (is_long) end++;
-        fn((uint32_t)addr, is_long);
+        /* Six hex digits (F is a suffix here, not a digit). */
+        char digits[7] = {0};
+        int nd = 0;
+        while (nd < 6 && isxdigit((unsigned char)list[nd])) { digits[nd] = list[nd]; nd++; }
+        if (nd == 0) break;
+        unsigned long addr = strtoul(digits, NULL, 16);
+        char *end = (char *)list + nd;
+        bool is_long = false, framed = false;
+        for (;; end++) {
+            if (*end == 'L' || *end == 'l') is_long = true;
+            else if (*end == 'F' || *end == 'f') framed = true;
+            else break;
+        }
+        (framed && framed_fn ? framed_fn : fn)((uint32_t)addr, is_long);
         list = (*end == ',') ? end + 1 : end;
     }
 }
+static void add_addr_list(const char *list, void (*fn)(uint32_t, bool)) { add_addr_list2(list, fn, NULL); }
 
 #ifdef MP_HAVE_GEN
 void gen_register_all(void);
@@ -157,7 +173,7 @@ int main(int argc, char *argv[]) {
         printf("Mario Paint recomp: %s\n", real ? "real-frame mode (genuine ROM, no native code)"
                                                 : "timed recomp (verified functions native)");
         if (!real && !getenv("MP_VALIDATE") && !getenv("MP_TIMED"))
-            add_addr_list(k_verified, recomp_timed_add_intercept);
+            add_addr_list2(k_verified, recomp_timed_add_intercept, recomp_timed_add_framed_intercept);
         /*
          * MP_TIMED="01D9E1L,008B48" — run exactly these natively instead of
          * k_verified (suffix L = returns with RTL). Add MP_REALFRAME=1 to start
@@ -171,8 +187,12 @@ int main(int argc, char *argv[]) {
          * MP_PROFILE=N — at exit, dump the N hottest JSR/JSL targets with the
          * M/X flags they are entered with (what to recompile next).
          */
-        add_addr_list(getenv("MP_TIMED"), recomp_timed_add_intercept);
+        add_addr_list2(getenv("MP_TIMED"), recomp_timed_add_intercept, recomp_timed_add_framed_intercept);
         add_addr_list(getenv("MP_VALIDATE"), recomp_timed_add_validate);
+        /* Frame drivers: a native body under validation that calls one waits
+         * there for the genuine frame (checked frame by frame); a framed
+         * intercept (suffix F) waits there while the timed CPU runs it. */
+        add_addr_list(k_frame_drivers, recomp_timed_add_frame_driver);
         if (getenv("MP_VALIDATE")) atexit(recomp_timed_validate_report);
         if (!real || getenv("MP_TIMED") || getenv("MP_VALIDATE") || getenv("MP_PROFILE"))
             recomp_timed_recomp_enable();

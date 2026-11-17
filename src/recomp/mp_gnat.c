@@ -472,9 +472,11 @@ void mp_01C5F8(void) {
 #define G16(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
 #define S16(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
 
-/* Lockstep validation runs a native body on a copy of the machine where
- * frames do not advance (the frame driver returns at once and marks the
- * call as skipped), so a loop that waits for input would never end. */
+/* Under lockstep validation a frame driver normally suspends the body until
+ * the genuine frame has run (main.c's k_frame_drivers). Should a frame be
+ * presented some other way there, frames do not advance on the copy of the
+ * machine and a loop that waits for input would never end: stop (the call
+ * is skipped anyway). */
 extern bool g_recomp_validating, g_recomp_frame_touched;
 static inline bool frames_frozen(void) { return g_recomp_validating && g_recomp_frame_touched; }
 
