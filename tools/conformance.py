@@ -47,7 +47,7 @@ BASELINE = os.path.join(HERE, "conformance_baseline.txt")
 # routine. Run natively they would advance the capture clock mid-check.
 FRAME_DRIVERS = {"018260", "01E2CE", "01E794", "01E7C9"}
 
-# Routines entered by JMP (abs,x) from a jump table, never by JSR/JSL, so the
+# Routines entered by JMP (abs,x) or $01:E393 from a jump table, never by JSR/JSL, so the
 # profile never lists them. They return through their dispatcher's caller's
 # return address, which the validator already handles, so they can be checked
 # like any other routine; they just have to be named here.
@@ -59,7 +59,9 @@ FRAME_DRIVERS = {"018260", "01E2CE", "01E794", "01E7C9"}
 TIMING_SENSITIVE = set()
 
 JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
-                "009760", "009853", "00987B", "0098C3", "0098F8", "009C25", "009DAB", "009DFB"]
+                "009760", "009853", "00987B", "0098C3", "0098F8", "009C25", "009DAB", "009DFB",
+                # Gnat Attack phases, entered through $01:E393's inline tables
+                "01C012", "01AF14", "01AFDB", "01C3C4"]
 
 
 def snaps(d):
