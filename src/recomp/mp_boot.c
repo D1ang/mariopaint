@@ -1021,6 +1021,7 @@ void mp_register_all(void) {
     mp_register_plot();
     mp_register_animscript();
     mp_register_music();
+    mp_register_gnat();
 
     /* Drawing tools */
     mp_register_tools();

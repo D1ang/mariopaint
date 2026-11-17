@@ -35,6 +35,7 @@ add_library(mp_game STATIC
     src/recomp/mp_plot.c
     src/recomp/mp_animscript.c
     src/recomp/mp_music.c
+    src/recomp/mp_gnat.c
     src/recomp/mp_titleloop.c
     src/recomp/mp_interact.c
     src/recomp/mp_tools.c

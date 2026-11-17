@@ -3,6 +3,7 @@
  *
  *   $01:962C  run one frame of the animation script for sprite slot A
  *   $01:972D  run one script command (dispatched through $01:E393's table)
+ *   $01:F84F  animate one object (the simpler object scripts)
  *
  * Slot variables at $0792 + slot*8: X (10-bit, half pixels), Y (9-bit, half
  * pixels), delay counter, step index, sprite base. Script pointers per slot
@@ -203,6 +204,63 @@ out:
     cpu_set_p(saved_p);
 }
 
+/* ========================================================================
+ * $01:F84F — Animate one object (A = object number)
+ *
+ * Objects live at $1A10 + n*8: X ($1A10, high bits), Y ($1A12, high byte),
+ * frame counter ($1A15), step ($1A16), loop step ($1A17). Their script
+ * is at the bank-$0D pointer at $0D:ED92 + n*2: an attribute word, then
+ * 4-byte steps [dx, dy, sprite, frames]. When the counter runs out, the
+ * next step is taken; a frames byte of 0 marks the loop start, $FF jumps
+ * back to it. Sprite $FF draws nothing; others go to $01:F91E.
+ * ======================================================================== */
+static inline uint8_t script8(uint16_t base, uint16_t y) {
+    uint32_t a = 0x0D0000u + base + y;
+    return bus_read8((uint8_t)(a >> 16), (uint16_t)a);
+}
+
+void mp_01F84F(void) {
+    uint8_t saved_p = cpu_get_p();
+    uint16_t n = CPU_A16();
+    uint16_t x = (uint16_t)((uint16_t)(n << 3) & 0x00FF);
+    uint16_t w = (uint16_t)(bus_wram_read16((uint16_t)(0x1A10 + x)) & 0xFF80);
+    uint16_t r = (uint16_t)((uint16_t)(w << 1) | (w >> 15));          /* CMP #$8000; ROL */
+    uint16_t px = (uint16_t)((r << 8) | (r >> 8));                      /* XBA -> $01 */
+    uint16_t py = (uint16_t)(bus_wram_read16((uint16_t)(0x1A12 + x)) >> 8);   /* -> $03 */
+    uint16_t base = bus_read16(0x0D, (uint16_t)(0xED92 + (uint16_t)(n << 1)));
+    uint16_t attr = read_long16(0x0D0000u + base);                      /* $07 */
+    base = (uint16_t)(base + 2);
+#define CNT  ((uint16_t)(0x1A15 + x))
+#define STP  ((uint16_t)(0x1A16 + x))
+#define LOOP ((uint16_t)(0x1A17 + x))
+    if (bus_wram_read8(CNT) == 0xFF) {                      /* next step */
+        for (;;) {
+            bus_wram_write8(STP, (uint8_t)(bus_wram_read8(STP) + 1));
+            uint8_t frames = script8(base, (uint16_t)(((bus_wram_read8(STP) + 1) << 2) - 1));
+            if (frames == 0x00) { bus_wram_write8(LOOP, bus_wram_read8(STP)); continue; }
+            if (frames == 0xFF) { bus_wram_write8(STP, bus_wram_read8(LOOP)); continue; }
+            bus_wram_write8(CNT, (uint8_t)(frames - 1));
+            break;
+        }
+    }
+    uint16_t y = (uint16_t)(bus_wram_read8(STP) << 2);
+    px = (uint16_t)((script8(base, y) + px) & 0x00FF);
+    py = (uint16_t)(script8(base, (uint16_t)(y + 1)) + py);
+    uint16_t sprite = script8(base, (uint16_t)(y + 2));
+    bus_wram_write8(CNT, (uint8_t)(bus_wram_read8(CNT) - 1));
+#undef CNT
+#undef STP
+#undef LOOP
+    if (sprite != 0x00FF) {
+        CPU_SET_A16((uint16_t)(sprite | attr));
+        g_cpu.X = px;
+        g_cpu.Y = py;
+        call_jsl(0x01F91E);
+    }
+    cpu_set_p(saved_p);
+}
+
 void mp_register_animscript(void) {
     func_table_register(0x01962C, mp_01962C);
+    func_table_register(0x01F84F, mp_01F84F);
 }
