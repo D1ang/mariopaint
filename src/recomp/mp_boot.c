@@ -1019,6 +1019,7 @@ void mp_register_all(void) {
     mp_register_interact();
     mp_register_stampbar();
     mp_register_plot();
+    mp_register_animscript();
 
     /* Drawing tools */
     mp_register_tools();
