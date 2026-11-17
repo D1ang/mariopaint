@@ -24,10 +24,12 @@ static inline void write_long16(uint32_t addr, uint16_t v) {
     bus_write8((uint8_t)(addr >> 16), (uint16_t)addr, (uint8_t)(v >> 8));
 }
 
-/* The 24-bit pointer at direct-page offset dp, as [dp],Y uses it. */
+/* The 24-bit pointer at direct-page offset dp, as [dp],Y uses it. The
+ * direct page is in bank 0: only $0000-$1FFF there is WRAM, so this goes
+ * through the bank-0 bus, not WRAM offsets (D + dp can pass $2000). */
 static inline uint32_t dp_long_ptr(uint16_t dp_base, uint8_t dp) {
     uint16_t a = (uint16_t)(dp_base + dp);
-    return (uint32_t)bus_wram_read16(a) | ((uint32_t)bus_wram_read8((uint16_t)(a + 2)) << 16);
+    return (uint32_t)bus_read16(0x00, a) | ((uint32_t)bus_read8(0x00, (uint16_t)(a + 2)) << 16);
 }
 
 #endif

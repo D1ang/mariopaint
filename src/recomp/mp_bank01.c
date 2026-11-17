@@ -199,22 +199,22 @@ void mp_01E09B(void) {
         uint16_t upper_x = (idx & 0xFFE0) >> 4;  /* (idx AND $FFE0) >> 4 = byte index */
         uint16_t bit_y = (idx & 0x001C) >> 1;     /* (idx AND $001C) >> 1 = bit table index */
 
-        /* Data table for bit masks: $FFFF,$FFFC,$FFF0,$FFC0,$FF00,$FC00,$F000,$C000 */
-        static const uint16_t masks[8] = {
-            0xFFFF, 0xFFFC, 0xFFF0, 0xFFC0,
-            0xFF00, 0xFC00, 0xF000, 0xC000
-        };
-
-        /* Apply mask: keep used bits as-is, set unused bits to $5555 pattern */
+        /* AND $E0F3,Y (DB = $01): Y is a byte offset into a word table. */
         uint16_t cur = bus_wram_read16(OAM_BUF_HI + upper_x);
-        uint16_t mask = masks[bit_y];
-        cur = (cur & ~mask) | (0x5555 & mask);
+        uint16_t mask = bus_read16(0x01, (uint16_t)(0xE0F3 + bit_y));
+        cur = (uint16_t)(((0x5555 ^ cur) & mask) ^ cur);
         bus_wram_write16(OAM_BUF_HI + upper_x, cur);
 
         /* Fill remaining upper OAM bytes with $5555 */
-        for (uint16_t x = upper_x + 2; x < 0x0020; x += 2) {
+        uint16_t x = upper_x;
+        for (;;) {
+            x = (uint16_t)(x + 2);
+            if (x == 0x0020) break;
             bus_wram_write16(OAM_BUF_HI + x, 0x5555);
         }
+        g_cpu.X = x;
+        g_cpu.Y = bit_y;
+        CPU_SET_A16(0x5555);
     }
 
     /* Reset sprite write index */
@@ -634,8 +634,8 @@ static void dma_queue_run(void) {
     bus_wram_write8(0x0202, 0x00);                          /* STZ x3 */
     bus_wram_write8(0x0204, 0x00);
     bus_wram_write8(0x0205, 0x00);
-    bus_wram_write8((uint16_t)(dp + 0xCD), 0x01);           /* STX $CD */
-    bus_wram_write8((uint16_t)(dp + 0xCC), 0x82);           /* STY $CC */
+    bus_write8(0x00, (uint16_t)(dp + 0xCD), 0x01);           /* STX $CD */
+    bus_write8(0x00, (uint16_t)(dp + 0xCC), 0x82);           /* STY $CC */
     const uint16_t base = 0x0182;                           /* ($CC) */
 
     uint16_t y = 0;                                         /* REP #$10 */
@@ -643,7 +643,7 @@ static void dma_queue_run(void) {
         uint8_t type = bus_wram_read8(base + y);
         CPU_SET_A8(type);
         if (type == 0) break;                               /* E6E8 */
-        bus_wram_write8((uint16_t)(dp + 0xDE), type);       /* STA $DE */
+        bus_write8(0x00, (uint16_t)(dp + 0xDE), type);       /* STA $DE */
         y++;
         bus_write8(0x00, DMA_SRCLO(0),   bus_wram_read8(base + y)); y++;
         bus_write8(0x00, DMA_SRCHI(0),   bus_wram_read8(base + y)); y++;
@@ -849,7 +849,54 @@ void mp_01E238(void) {
 /* ========================================================================
  * Register all Bank 01 recompiled functions.
  * ======================================================================== */
+/* ========================================================================
+ * $01:E3AC — queue n VRAM DMA records from stack arguments. The caller
+ * pushed (first to last) the source address, the source bank, the VRAM
+ * address, the rows-per-record value and n, then JSLs; with D = S after
+ * PHP; PHD: $0F source, $0D bank, $0B VRAM, $09 size (made size * 32),
+ * $07 n. Each record: [2][src][bank][size][$80][vram]; the source moves
+ * $200 and VRAM $100 on per record. The routine then moves its return
+ * frame over the 10 argument bytes and returns past them (SP + $0D).
+ * ======================================================================== */
+void mp_01E3AC(void) {
+    uint16_t s0 = g_cpu.S;
+    uint8_t p = cpu_get_p();
+    uint16_t dp0 = g_cpu.DP;
+    uint16_t d = (uint16_t)(s0 - 3);
+    bus_wram_write8(s0, p);                                 /* PHP */
+    bus_wram_write16((uint16_t)(s0 - 2), dp0);              /* PHD */
+#define A16(o)    bus_wram_read16((uint16_t)(d + (o)))
+#define SA16(o,v) bus_wram_write16((uint16_t)(d + (o)), (uint16_t)(v))
+#define A8(o)     bus_wram_read8((uint16_t)(d + (o)))
+    uint16_t sz = A16(0x09);
+    SA16(0x09, (uint16_t)(((uint16_t)((sz << 8) | (sz >> 8))) >> 3));
+    uint8_t db = g_cpu.DB;
+    bus_write16(db, 0x0202, 0);
+    uint16_t x = bus_read16(db, 0x0204);
+    do {
+        uint8_t rec[9] = { 0x02, A8(0x0F), A8(0x10), A8(0x0D), A8(0x09), A8(0x0A), 0x80, A8(0x0B), A8(0x0C) };
+        for (int i = 0; i < 9; i++, x++) bus_write8(db, (uint16_t)(0x0182 + x), rec[i]);
+        SA16(0x0F, A16(0x0F) + 0x0200);
+        SA16(0x0B, A16(0x0B) + 0x0100);
+        SA16(0x07, A16(0x07) - 1);
+    } while (A16(0x07) != 0);
+    bus_write16(db, 0x0204, x);
+    bus_write8(db, (uint16_t)(0x0182 + x), 0x00);
+    bus_wram_write8((uint16_t)(d + 0x10), bus_wram_read8((uint16_t)(d + 0x06)));     /* LDA $06,s; STA $10,s */
+    uint16_t ret = bus_wram_read16((uint16_t)(d + 0x04));
+    bus_wram_write16((uint16_t)(d + 0x0E), ret);                                       /* LDA $04,s; STA $0E,s */
+#undef A16
+#undef SA16
+#undef A8
+    g_cpu.X = x;
+    g_cpu.DP = dp0;
+    cpu_set_p(p);
+    g_cpu.S = (uint16_t)(d + 0x0D);                         /* TSC; ADC #$0D; TCS: RTL from there */
+    CPU_SET_A16(g_cpu.S);
+}
+
 void mp_register_bank01(void) {
+    func_table_register(0x01E3AC, mp_01E3AC);
     func_table_register(0x01E393, mp_01E393);
     func_table_register(0x01E024, mp_01E024);
     func_table_register(0x01E033, mp_01E033);

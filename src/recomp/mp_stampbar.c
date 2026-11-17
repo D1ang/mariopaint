@@ -28,8 +28,8 @@
  * DP $05 (+Y) into $101C+X and $102C+X; X and Y step by 2. ---- */
 static void copy_plane_pair(void) {
     uint16_t dp = g_cpu.DP;
-    uint32_t p1 = bus_wram_read16((uint16_t)(dp + 1)) | ((uint32_t)bus_wram_read8((uint16_t)(dp + 3)) << 16);
-    uint32_t p2 = bus_wram_read16((uint16_t)(dp + 5)) | ((uint32_t)bus_wram_read8((uint16_t)(dp + 7)) << 16);
+    uint32_t p1 = bus_read16(0x00, (uint16_t)(dp + 1)) | ((uint32_t)bus_read8(0x00, (uint16_t)(dp + 3)) << 16);
+    uint32_t p2 = bus_read16(0x00, (uint16_t)(dp + 5)) | ((uint32_t)bus_read8(0x00, (uint16_t)(dp + 7)) << 16);
     uint16_t x = g_cpu.X, y = g_cpu.Y;
     bus_wram_write16((uint16_t)(0x101C + x), read_long16(p1 + y));   /* LDA [$01],y */
     uint16_t v = read_long16(p2 + y);
@@ -199,7 +199,94 @@ void mp_00DE8E(void) {
     CPU_SET_A16(0xFFFF);
 }
 
+/* ---- $01:D421: load the stamp page's graphics: for the current tool
+ * ($AA) the list at $01:DB53 + $01:DB31[tool] of source offsets (ends with
+ * a negative one; $5400/$5A00 are moved by the page offset $0999 except
+ * for tool $0F) - each 32 words from $03:8000/$8200/$8400 to $7F:8000/
+ * $8200/$8400 + Y, 8 per row with a $400 gap after each row. Then the
+ * five DMA words at $01:D4AD, waiting a frame first if the queue is busy,
+ * and one frame. */
+static void stamp_page_tiles(void) {
+    uint16_t aa = bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xAA));
+    uint16_t x = bus_read16(0x01, (uint16_t)(0xDB31 + (uint16_t)(aa << 1)));
+    uint16_t y = 0, n = 0;
+    for (;;) {
+        uint16_t v = bus_read16(0x01, (uint16_t)(0xDB53 + x));
+        if (v & 0x8000) break;
+        if ((v == 0x5400 || v == 0x5A00) && bus_wram_read16(0x00AA) != 0x000F)
+            v = (uint16_t)(v + bus_wram_read16(0x0999));
+        uint16_t sx = v;
+        do {
+            bus_write16(0x7F, (uint16_t)(0x8000 + y), read_long16(0x038000u + sx));
+            bus_write16(0x7F, (uint16_t)(0x8200 + y), read_long16(0x038200u + sx));
+            bus_write16(0x7F, (uint16_t)(0x8400 + y), read_long16(0x038400u + sx));
+            sx = (uint16_t)(sx + 2);
+            y = (uint16_t)(y + 2);
+        } while (y & 0x003F);
+        x = (uint16_t)(x + 2);
+        n++;
+        if (!(n & 7)) y = (uint16_t)(y + 0x0400);
+    }
+    uint8_t db = g_cpu.DB;
+    if (bus_read16(db, 0x0204) != 0) call_jsl(0x01E2CE);
+    for (int i = 8; i >= 0; i -= 2) bus_write16(db, (uint16_t)(0x0182 + i), bus_read16(0x01, (uint16_t)(0xD4AD + i)));
+    bus_write16(db, 0x0202, bus_read16(db, 0x0202) + 1);
+    call_jsl(0x01E2CE);
+}
+
+/* ---- $01:D409: show stamp page $0997 (table at $01:D411: every entry
+ * sets the page, its offset $40 * page, redraws $D56D/$D597 and loads the
+ * graphics). */
+void mp_01D409(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t k = bus_read16(db, 0x0997);
+    uint16_t h = bus_read16(0x01, (uint16_t)(0xD411 + (uint16_t)(k << 1)));
+    if (k >= 8 || h != (uint16_t)(0xD4BB + (k ? 0x11 + 0x17 * (k - 1) : 0))) {   /* not one of the eight */
+        tail_jmp(0x010000u | h);
+        return;
+    }
+    bus_write16(db, 0x0997, k);
+    bus_write16(db, 0x0999, (uint16_t)(k << 6));
+    call_jsl(0x01D56D);
+    call_jsl(0x01D597);
+    stamp_page_tiles();
+}
+
+/* ---- $01:D3BA: the stamp page arrows (left/right button = page -/+, 4 or
+ * 8 pages with $099F), sound 6, $058B set while the page loads; the palette
+ * ($00:A44D) and $00:E64B unless the tool is 6 or 7. */
+void mp_01D3BA(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t b = bus_read16(db, 0x04CA);
+    if (!(b & 0x0044)) return;
+    uint16_t pg = bus_read16(db, 0x0997);
+    pg = (uint16_t)((b & 0x0040) ? pg + 1 : pg - 1);
+    bus_write16(db, 0x0997, pg);
+    CPU_SET_A16(0x0006); call_jsl(0x01D368);
+    uint16_t m = bus_read16(db, 0x099F) ? 0x0007 : 0x0003;
+    bus_write16(db, 0x0997, (uint16_t)(m & bus_read16(db, 0x0997)));
+    bus_write16(db, 0x058B, 0x0001);
+    call_jsr(0x01D409);
+    bus_write16(db, 0x058B, 0x0000);
+    uint16_t t = bus_read16(db, 0x04D0);
+    if (t == 0x0006 || t == 0x0007) return;
+    call_jsl(0x00A44D);
+    func_table_call(0x00E64B);                              /* JML: it returns for us */
+}
+
+/* ---- $01:D3AB: queue sound $1012 + 2, or $1D when $1012 is 0, on track 0
+ * (JMP $D2BF). */
+void mp_01D3AB(void) {
+    uint16_t a = bus_read16(g_cpu.DB, 0x1012);
+    CPU_SET_A16(a ? (uint16_t)(a + 2) : 0x001D);
+    tail_jmp(0x01D2BF);
+}
+
 void mp_register_stampbar(void) {
+    func_table_register(0x01D409, mp_01D409);
+    func_table_register(0x01D3BA, mp_01D3BA);
+    func_table_register(0x01D3AB, mp_01D3AB);
+
     func_table_register(0x00DE8E, mp_00DE8E);
     func_table_register(0x00E0D4, mp_00E0D4);
     func_table_register(0x00E167, mp_00E167);

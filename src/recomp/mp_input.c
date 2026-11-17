@@ -179,6 +179,27 @@ void mp_01DA73_entry(void) { mp_01DA73((uint16_t)(MOUSE_X_DISP + (g_cpu.X & 0xFF
 void mp_01DABF_entry(void) { mp_01DABF(g_cpu.X & 0xFF); }
 void mp_01DAF9_entry(void) { mp_01DAF9(g_cpu.X & 0xFF); }
 
+/* $01:DA88 — fold the auto-read buttons of port X into $04CA+X: bits 6 of
+ * repeat/pressed/held (ASL ASL; ROL), a 0, then bits 7 (ASL; ROL), shifted
+ * in on top of what was there; then the double-click check ($DABF). */
+void mp_01DA88(void) {
+    uint8_t x = (uint8_t)g_cpu.X, y = (uint8_t)(x << 1);
+    uint8_t db = g_cpu.DB;
+    uint8_t v = bus_read8(db, (uint16_t)(MOUSE_BUTTONS + x));
+    static const uint16_t src[3] = { REPEAT_P1, PRESSED_P1, HELD_P1 };
+    for (int i = 0; i < 3; i++) v = (uint8_t)((v << 1) | ((bus_read8(db, (uint16_t)(src[i] + y)) >> 6) & 1));
+    v = (uint8_t)(v << 1);
+    uint8_t a = 0;
+    for (int i = 0; i < 3; i++) {
+        a = bus_read8(db, (uint16_t)(src[i] + y));
+        v = (uint8_t)((v << 1) | (a >> 7));
+    }
+    bus_write8(db, (uint16_t)(MOUSE_BUTTONS + x), v);
+    g_cpu.Y = y;
+    mp_01DABF(x);
+    g_cpu.X = x;
+}
+
 void mp_01D9E1(void) {
     if (bus_wram_read8(MOUSE_ACTIVE) != 0) return;
     bus_wram_write8(MOUSE_ACTIVE, 0x01);
@@ -369,6 +390,7 @@ void mp_register_input(void) {
     func_table_register(0x01DA73, mp_01DA73_entry);
     func_table_register(0x01DABF, mp_01DABF_entry);
     func_table_register(0x01DAF9, mp_01DAF9_entry);
+    func_table_register(0x01DA88, mp_01DA88);
     func_table_register(0x01D9E1, mp_01D9E1);
     func_table_register(0x00815B, mp_00815B);
     func_table_register(0x008187, mp_008187);

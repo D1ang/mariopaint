@@ -24,7 +24,7 @@
 #include <stdint.h>
 
 static inline void call_jsr(uint32_t addr) {
-    if (func_table_lookup(addr)) {
+    if (func_table_native(addr)) {
         g_cpu.S = (uint16_t)(g_cpu.S - 2);
         func_table_call_jsr(addr);
         g_cpu.S = (uint16_t)(g_cpu.S + 2);
@@ -34,7 +34,7 @@ static inline void call_jsr(uint32_t addr) {
 }
 
 static inline void call_jsl(uint32_t addr) {
-    if (func_table_lookup(addr)) {
+    if (func_table_native(addr)) {
         g_cpu.S = (uint16_t)(g_cpu.S - 3);
         func_table_call(addr);
         g_cpu.S = (uint16_t)(g_cpu.S + 3);

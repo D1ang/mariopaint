@@ -10,6 +10,9 @@
 
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
+#include <snesrecomp/func_table.h>
+#include <mp/calls.h>
+#include <mp/mem.h>
 #include <snesrecomp/snesrecomp.h>
 
 #include <stdbool.h>
@@ -333,7 +336,487 @@ void mp_019372(void) {
 /* ========================================================================
  * Register all miscellaneous functions.
  * ======================================================================== */
+/* ======================================================================
+ * Window HDMA tables ($01:9130-$91FD). Two tables at $7E:4000 and $7E:4200
+ * ($0211 = 1 picks the first): byte pairs (left, right) per scanline, two
+ * line-count bytes in between at the 128-line split. 16-bit.
+ * ==================================================================== */
+static uint16_t hdma_line_index(uint16_t y) {
+    return y < 0x0070 ? (uint16_t)((y << 1) + 1) : (uint16_t)((y + 1) << 1);
+}
+/* $01:9130: Y = line, X = left edge (clamped at 0). */
+void mp_019130(void) {
+    uint16_t y = g_cpu.Y, x = g_cpu.X;
+    if ((y & 0x8000) || !((uint16_t)(y - 0x00E0) & 0x8000)) return;
+    if (x & 0x8000) x = 0;
+    uint16_t i = hdma_line_index(y);
+    uint16_t sel = bus_read16(g_cpu.DB, 0x0211);
+    bus_write8(0x7E, (uint16_t)((sel == 1 ? 0x4000 : 0x4200) + i), (uint8_t)x);
+    g_cpu.Y = i; g_cpu.X = i;
+    CPU_SET_A16(x);
+    g_cpu.flag_C = sel >= 1;                                /* CMP #$0001 */
+    cpu_update_nz16(x);                                     /* PLA */
+}
+/* $01:916E: Y = line, X = right edge (clamped at $FF). */
+void mp_01916E(void) {
+    uint16_t y = g_cpu.Y, x = g_cpu.X;
+    if ((y & 0x8000) || !((uint16_t)(y - 0x00E0) & 0x8000)) return;
+    if (!((uint16_t)(x - 0x00FF) & 0x8000)) x = 0x00FF;
+    uint16_t i = hdma_line_index(y);
+    uint16_t sel = bus_read16(g_cpu.DB, 0x0211);
+    bus_write8(0x7E, (uint16_t)((sel == 1 ? 0x4001 : 0x4201) + i), (uint8_t)x);
+    g_cpu.Y = i; g_cpu.X = i;
+    CPU_SET_A16(x);
+    g_cpu.flag_C = sel >= 1;
+    cpu_update_nz16(x);
+}
+/* $01:91AC: reset the current table: two $70-line blocks, all lines
+ * (left 1, right 0) = empty window, terminator. */
+void mp_0191AC(void) {
+    uint16_t b = bus_read16(g_cpu.DB, 0x0211) == 1 ? 0x4000 : 0x4200;
+    bus_write16(0x7E, b, 0x00F0);
+    bus_write16(0x7E, (uint16_t)(b + 0xE1), 0x00F0);
+    bus_write16(0x7E, (uint16_t)(b + 0x1C2), 0x0000);
+    for (int x = 0xDE; x >= 0; x -= 2) {
+        bus_write16(0x7E, (uint16_t)(b + 0x01 + x), 0x0001);
+        bus_write16(0x7E, (uint16_t)(b + 0xE2 + x), 0x0001);
+    }
+    g_cpu.X = 0xFFFE;
+    CPU_SET_A16(0x0001);
+    g_cpu.flag_N = true; g_cpu.flag_Z = false;              /* DEX past 0 */
+}
+
+/* ======================================================================
+ * Save-data compressor ($01:ECD5-$01:EFB9): LZ77 over the bytes at
+ * $7E:4400 (DB = $7E) into $7F:2000. A 3-byte hash ($7F:0004 + 2h: last
+ * position, or $FFFF) chains up to 128 recent positions in a ring
+ * ($7F:0204 next, $7F:0304 prev / bucket | $4000, $7F:0404 position).
+ * Locals live in the direct page the ROM carves out of the stack, so the
+ * C code keeps them there too: $16 ring slot, $18 position, $1A bucket,
+ * $1C chain cursor, $02 output, $04 input, ... 16-bit.
+ * ==================================================================== */
+#define DPR(o)     bus_read16(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define DPW(o, v)  bus_write16(0x00, (uint16_t)(g_cpu.DP + (o)), (uint16_t)(v))
+/* LDA/STA $7F:base,X: the 24-bit sum carries, so X = $FFFF (a chain's end
+ * marker, written through by the unlink code) reaches bank $80. */
+#define T7F(o)     read_long16(0x7F0000u + (uint32_t)(o))
+#define W7F(o, v)  write_long16(0x7F0000u + (uint32_t)(o), (uint16_t)(v))
+
+static uint16_t lz_hash(uint16_t pos) {
+    uint8_t db = g_cpu.DB;
+    uint16_t a = bus_read16(db, (uint16_t)(0x4400 + pos)) ^ bus_read16(db, (uint16_t)(0x4401 + pos)) ^
+                 bus_read16(db, (uint16_t)(0x4402 + pos));
+    return (uint16_t)((a & 0x00FF) << 1);
+}
+
+/* $01:ECD5: empty hash heads and ring; $16 = $18 = $1A = 0. */
+void mp_01ECD5(void) {
+    for (uint16_t x = 0; x != 0x0200; x += 2) W7F(0x0004 + x, 0xFFFF);
+    for (uint16_t x = 0; x != 0x0100; x += 2) {
+        W7F(0x0204 + x, 0xFFFF); W7F(0x0304 + x, 0xFFFF); W7F(0x0404 + x, 0xFFFF);
+    }
+    DPW(0x16, 0); DPW(0x18, 0); DPW(0x1A, 0);
+    g_cpu.X = 0x0100;
+    CPU_SET_A16(0xFFFF);
+}
+
+/* $01:ED03: insert position $18 into the ring at slot $16 (evicting the
+ * slot's old entry from its chain), as the newest entry of its hash chain;
+ * then advance the slot (wrapping at $100) and the position. X, Y kept. */
+void mp_01ED03(void) {
+    uint16_t sx = g_cpu.X, sy = g_cpu.Y;
+    DPW(0x1A, lz_hash(DPR(0x18)));
+    uint16_t slot = DPR(0x16);
+    uint16_t a = T7F(0x0304 + slot);
+    if (!(a & 0x8000)) {                                    /* the slot is in use: unlink it */
+        if (!(a & 0x4000)) {                                /* prev is a ring slot */
+            uint16_t prev = a;
+            uint16_t nxt = T7F(0x0204 + slot);
+            W7F(0x0204 + prev, nxt);
+            W7F(0x0304 + nxt, prev);
+        } else {                                            /* prev is the hash head */
+            uint16_t head = a & 0x01FF;
+            uint16_t nxt = T7F(0x0204 + slot);
+            W7F(0x0004 + head, nxt);
+            W7F(0x0304 + nxt, (uint16_t)(head | 0x4000));
+        }
+    }
+    uint16_t x = DPR(0x1A);
+    a = T7F(0x0004 + x);
+    if (a & 0x8000) {                                       /* empty chain */
+        W7F(0x0004 + x, DPR(0x16));
+        uint16_t b = x;
+        x = DPR(0x16);
+        W7F(0x0304 + x, (uint16_t)(b | 0x4000));
+    } else {                                                /* append at the chain's end */
+        do { x = a; a = T7F(0x0204 + x); } while (!(a & 0x8000));
+        W7F(0x0204 + x, DPR(0x16));
+        uint16_t b = x;
+        x = DPR(0x16);
+        W7F(0x0304 + x, b);
+    }
+    W7F(0x0204 + x, 0xFFFF);
+    W7F(0x0404 + x, DPR(0x18));
+    x = (uint16_t)(x + 2);
+    if (x == 0x0100) x = 0;
+    DPW(0x16, x);
+    DPW(0x18, DPR(0x18) + 1);
+    CPU_SET_A16(DPR(0x18) - 1);
+    g_cpu.X = sx; g_cpu.Y = sy;
+}
+
+/* $01:EDAB: X = position: first candidate of its hash chain. Carry set
+ * with A = its position and $1C = its slot; clear when the chain is empty. */
+void mp_01EDAB(void) {
+    uint16_t x = lz_hash(g_cpu.X);
+    uint16_t a = T7F(0x0004 + x);
+    if (a & 0x8000) { g_cpu.X = x; CPU_SET_A16(a); g_cpu.flag_C = false; return; }
+    g_cpu.X = a;
+    CPU_SET_A16(T7F(0x0404 + a));
+    DPW(0x1C, a);
+    g_cpu.flag_C = true;
+}
+/* $01:EDCA: the next candidate after slot $1C (same results). */
+void mp_01EDCA(void) {
+    uint16_t x = DPR(0x1C);
+    uint16_t a = T7F(0x0204 + x);
+    g_cpu.X = x;
+    if (a & 0x8000) { CPU_SET_A16(a); g_cpu.flag_C = false; return; }
+    g_cpu.X = a;
+    CPU_SET_A16(T7F(0x0404 + a));
+    DPW(0x1C, a);
+    g_cpu.flag_C = true;
+}
+
+/* $01:EFB9: progress: add the 32-bit step $0551 to $0555; every $054D
+ * frames ($016C) call the progress routine whose address is at $0549
+ * (entered by RTL, returning to $01:F00D), out of vblank with NMI off,
+ * then $E09B and $E2F3. X, Y kept. */
+void mp_01EFB9(void) {
+    uint16_t lo = bus_wram_read16(0x0555), add = bus_wram_read16(0x0551);
+    uint32_t sum = (uint32_t)lo + add;
+    bus_wram_write16(0x0555, (uint16_t)sum);
+    bus_wram_write16(0x0557, (uint16_t)(bus_wram_read16(0x0557) + bus_wram_read16(0x0553) + (sum >> 16)));
+    if (bus_wram_read16(0x016C) < bus_wram_read16(0x054D)) return;
+    uint16_t sx = g_cpu.X, sy = g_cpu.Y, s0 = g_cpu.S;
+    g_cpu.S = (uint16_t)(g_cpu.S - 4);                      /* PHX PHY */
+    bus_wram_write16(0x016C, 0x0000);
+    bus_wram_write16(0x0446, 0x0004);
+    call_jsl(0x01E30E);
+    while ((bus_read8(0x00, 0x4212) & 0x80) && recomp_timed_spin(64)) {}
+    uint32_t cb = (uint32_t)bus_wram_read8(0x054B) << 16 | (uint16_t)(bus_wram_read16(0x0549) + 1);
+    call_jsl(cb);                                           /* RTL into it; it returns to $F00D */
+    call_jsl(0x01E09B);
+    call_jsl(0x01E2F3);
+    g_cpu.S = s0;
+    g_cpu.X = sx; g_cpu.Y = sy;
+}
+
+static void lz_step(void) { call_jsr(0x01EFB9); call_jsr(0x01ED03); }
+static uint8_t lz_in(uint16_t pos) { return bus_read8(0x7E, (uint16_t)(0x4400 + pos)); }
+
+/* ---- $01:EDDB: compress $BA52 bytes from $7E:4400 to $7F:2000. Output:
+ * word 1, the first byte, then groups: a word count n (literals, up to
+ * $7FFF) followed by n bytes, or a match word $8000 | len << 8 | distance
+ * (len 4-$12) followed by a new count word. Ends with $FFFF; the total
+ * size goes to $7F:0002 and A = 0. If the output would pass $7F:FEFC the
+ * ROM leaves with A = $FFFF through an RTS (one byte short of its JSL
+ * frame): that path is handed to the ROM's own return target. */
+void mp_01EDDB(void) {
+    uint16_t s_entry = g_cpu.S;
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+    bus_wram_write8(s_entry, db);                           /* PHB */
+    g_cpu.DB = 0x7E;
+    bus_wram_write16((uint16_t)(s_entry - 2), dp);          /* PHD */
+    uint16_t frame = (uint16_t)(s_entry - 3 - 0x1E);
+    g_cpu.S = frame; g_cpu.DP = frame;                      /* TSC; SBC #$1E; TCS; TCD */
+
+    call_jsr(0x01ECD5);
+    DPW(0x14, 0xBA52);
+    DPW(0x0E, 0xFEFC);
+    DPW(0x10, 0x2000);
+    DPW(0x12, 0x2000);
+    write_long16(0x7F2000, 0x0001);
+    bus_write8(0x7F, 0x2002, lz_in(0));
+    DPW(0x02, 0x2003);
+    DPW(0x04, 0x0001);
+    lz_step();
+    uint16_t y;
+    for (;;) {
+        DPW(0x0A, 0);                                       /* $EE22 */
+        g_cpu.X = DPR(0x04);
+        call_jsr(0x01EDAB);
+        bool match = false;
+        if (g_cpu.flag_C) {
+            for (;;) {                                      /* $EE2B: try this candidate */
+                uint16_t cand = CPU_A16();
+                DPW(0x06, cand);
+                uint16_t x = cand; y = DPR(0x04);
+                DPW(0x08, 0);
+                for (;;) {
+                    if (lz_in(y) != lz_in(x)) break;
+                    y++; x++;
+                    DPW(0x08, DPR(0x08) + 1);
+                    if (DPR(0x08) == 0x0012) break;
+                }
+                if (DPR(0x08) == 0x0012) {                  /* longest possible */
+                    DPW(0x0A, DPR(0x08));
+                    DPW(0x0C, DPR(0x06));
+                    match = true;
+                    break;
+                }
+                if (DPR(0x08) >= DPR(0x0A)) { DPW(0x0A, DPR(0x08)); DPW(0x0C, DPR(0x06)); }
+                g_cpu.X = x; g_cpu.Y = y;
+                call_jsr(0x01EDCA);
+                if (!g_cpu.flag_C) break;
+            }
+            if (!match && DPR(0x0A) >= 0x0004) match = true;
+        }
+        if (match) {                                        /* $EE6D */
+            for (y = DPR(0x0A); y; y--) { g_cpu.Y = y; lz_step(); }
+            y = DPR(0x02);
+            if (read_long16(0x7F0000u + DPR(0x12)) == 0) y = (uint16_t)(y - 2);   /* no literals: reuse */
+            uint16_t x = y;
+            DPW(0x0C, (uint16_t)(DPR(0x04) - DPR(0x0C)));
+            uint16_t len = DPR(0x0A);
+            write_long16(0x7F0000u + x, (uint16_t)(((len << 8) | (len >> 8)) | DPR(0x0C) | 0x8000));
+            x = (uint16_t)(x + 2);
+            write_long16(0x7F0000u + x, 0x0000);
+            DPW(0x12, x);
+            x = (uint16_t)(x + 2);
+            if (x >= DPR(0x0E)) goto overflow;
+            DPW(0x02, x);
+            y = (uint16_t)(DPR(0x0A) + DPR(0x04));
+        } else {                                            /* $EEB2: one literal */
+            uint16_t x = DPR(0x02);
+            y = DPR(0x04);
+            bus_write8(0x7F, x, lz_in(y));
+            x++;
+            DPW(0x02, x);
+            x = DPR(0x12);
+            uint16_t n = (uint16_t)(read_long16(0x7F0000u + x) + 1);
+            write_long16(0x7F0000u + x, n);
+            if (n & 0x8000) {                               /* count full: new group */
+                write_long16(0x7F0000u + x, (uint16_t)(n - 1));
+                x = DPR(0x02);
+                write_long16(0x7F0000u + x, 0x0000);
+                DPW(0x12, x);
+                x = (uint16_t)(x + 2);
+                bus_write8(0x7F, x, lz_in(y));
+                DPW(0x02, x);
+            }
+            g_cpu.Y = y;
+            lz_step();
+            if (DPR(0x02) >= DPR(0x0E)) goto overflow;
+            y++;
+        }
+        DPW(0x04, y);                                       /* $EEFD */
+        if (y >= DPR(0x14)) break;
+    }
+    {                                                       /* $EF06 */
+        uint16_t x = (uint16_t)(DPR(0x02) - 2);
+        write_long16(0x7F0000u + x, 0xFFFF);
+        x = (uint16_t)(x + 3);
+        uint16_t size = (uint16_t)(x - DPR(0x10));
+        DPW(0x14, size);
+        write_long16(0x7F0002, size);
+        g_cpu.X = x; g_cpu.Y = y;
+        g_cpu.S = s_entry; g_cpu.DP = dp; g_cpu.DB = db;
+        CPU_SET_A16(0x0000);
+        g_cpu.flag_Z = true; g_cpu.flag_N = false;
+        return;
+    }
+overflow:                                                   /* $EF2A */
+    g_cpu.S = s_entry; g_cpu.DP = dp; g_cpu.DB = db;
+    CPU_SET_A16(0xFFFF);
+    {
+        uint16_t ret = bus_wram_read16((uint16_t)(s_entry + 1));
+        g_cpu.S = (uint16_t)(s_entry + 2);                  /* RTS pops two of the JSL's three bytes */
+        recomp_set_redirect(0x010000u | (uint16_t)(ret + 1));
+    }
+}
+
+/* Stack pushes/pulls as PHA/PLA do them (16-bit), for routines that pass
+ * arguments on the stack. */
+static void push16(uint16_t v) {
+    bus_wram_write8(g_cpu.S, (uint8_t)(v >> 8));
+    bus_wram_write8((uint16_t)(g_cpu.S - 1), (uint8_t)v);
+    g_cpu.S = (uint16_t)(g_cpu.S - 2);
+}
+static uint16_t pull16(void) {
+    uint16_t v = bus_wram_read16((uint16_t)(g_cpu.S + 1));
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    return v;
+}
+
+/* ---- $01:DD79: 32-bit unsigned division with stack arguments. The caller
+ * pushed the dividend (hi, lo) and then the divisor (hi, lo) before its
+ * JSL; on return the divisor's 4 bytes are gone (the return frame and the
+ * saved P are moved up over them) and the dividend's slots hold the
+ * quotient. Restoring division, 33 steps, remainder in the routine's own
+ * locals. A comes back as the moved word (return high byte, bank). */
+void mp_01DD79(void) {
+    uint16_t s0 = g_cpu.S;
+    uint8_t p = cpu_get_p();
+    uint32_t dvsr = bus_wram_read16((uint16_t)(s0 + 4)) | (uint32_t)bus_wram_read16((uint16_t)(s0 + 6)) << 16;
+    uint32_t q = bus_wram_read16((uint16_t)(s0 + 8)) | (uint32_t)bus_wram_read16((uint16_t)(s0 + 10)) << 16;
+    uint32_t rem = 0;
+    for (int i = 0; i < 0x21; i++) {
+        uint32_t c = rem >= dvsr;
+        if (c) rem -= dvsr;
+        uint32_t qc = q >> 31;
+        q = (q << 1) | c;
+        rem = (rem << 1) | qc;
+    }
+    /* PHP PHD PHX PEA PEA: the locals frame (remainder at its $01/$03). */
+    bus_wram_write8(s0, p);
+    bus_wram_write16((uint16_t)(s0 - 2), g_cpu.DP);
+    bus_wram_write16((uint16_t)(s0 - 4), g_cpu.X);
+    bus_wram_write16((uint16_t)(s0 - 8), (uint16_t)rem);
+    bus_wram_write16((uint16_t)(s0 - 6), (uint16_t)(rem >> 16));
+    bus_wram_write16((uint16_t)(s0 + 8), (uint16_t)q);
+    bus_wram_write16((uint16_t)(s0 + 10), (uint16_t)(q >> 16));
+    uint16_t w1 = bus_wram_read16(s0);                      /* P, return low */
+    uint16_t w2 = bus_wram_read16((uint16_t)(s0 + 2));      /* return high, bank */
+    bus_wram_write16((uint16_t)(s0 + 4), w1);
+    bus_wram_write16((uint16_t)(s0 + 6), w2);
+    CPU_SET_A16(w2);
+    g_cpu.S = (uint16_t)(s0 + 4);                           /* PLP; RTL from the moved frame */
+    cpu_set_p(p);
+}
+
+/* ---- $00:D659: the save/load progress in percent: $0555/$0557 (done,
+ * 0 while negative) / $0559/$055B (total) via $01:DD79, as sprites $C2+
+ * digit at y $62 ("100" with the leading 1 at x $78). Only while $055D. */
+void mp_00D659(void) {
+    if (bus_read16(g_cpu.DB, 0x055D) == 0) return;
+    uint16_t hi = bus_read16(g_cpu.DB, 0x0557);
+    if (hi & 0x8000) { push16(0); push16(0); }
+    else { push16(hi); push16(bus_read16(g_cpu.DB, 0x0555)); }
+    push16(bus_read16(g_cpu.DB, 0x055B));
+    push16(bus_read16(g_cpu.DB, 0x0559));
+    call_jsl(0x01DD79);
+    uint16_t a = pull16();
+    (void)pull16();                                         /* PLY: quotient high */
+    uint16_t tens = 0;
+    while (a >= 0x000A) { a = (uint16_t)(a - 10); tens++; }
+    uint16_t units = a;
+    if (tens >= 0x000A) {
+        g_cpu.X = 0x0078; g_cpu.Y = 0x0062; CPU_SET_A16(0x00C3); call_jsl(0x01F91E);
+        g_cpu.X = 0x0080; g_cpu.Y = 0x0062; CPU_SET_A16(0x00C2); call_jsl(0x01F91E);
+        units = 0;
+    } else if (tens != 0) {
+        g_cpu.X = 0x0080; g_cpu.Y = 0x0062; CPU_SET_A16((uint16_t)(tens + 0x00C2)); call_jsl(0x01F91E);
+    }
+    g_cpu.X = 0x0088; g_cpu.Y = 0x0062; CPU_SET_A16((uint16_t)(units + 0x00C2)); call_jsl(0x01F91E);
+}
+
+/* ---- $00:D5F5: the save/load screen's sprites: progress, the pointer
+ * ($1980, unless negative), the disk, objects $16-$0E, a sound when $1ADD =
+ * $100, the arrows. DB = 0 meanwhile. */
+void mp_00D5F5(void) {
+    uint8_t db = g_cpu.DB;
+    g_cpu.DB = 0x00;
+    call_jsr(0x00D659);
+    uint16_t ptr = bus_read16(0x00, 0x1980);
+    if (!(ptr & 0x8000)) { g_cpu.X = 0x0070; g_cpu.Y = 0x00CC; CPU_SET_A16(ptr); call_jsl(0x01F91E); }
+    g_cpu.X = 0x0049; g_cpu.Y = 0x00AE; CPU_SET_A16(0x008C); call_jsl(0x01F91E);
+    for (uint16_t o = 0x16; o >= 0x0E; o--) { CPU_SET_A16(o); call_jsl(0x01F84F); }
+    if (bus_read16(0x00, 0x1ADD) == 0x0100) { CPU_SET_A16(0x007C); call_jsl(0x01D368); }
+    CPU_SET_A16(0x0019); call_jsl(0x01F84F);
+    g_cpu.X = 0x0080; g_cpu.Y = 0x007A; CPU_SET_A16(0x0045); call_jsl(0x01F91E);
+    CPU_SET_A16(0x0017); call_jsl(0x01F84F);
+    CPU_SET_A16(0x0018); call_jsl(0x01F84F);
+    g_cpu.DB = db;
+}
+
+/* ---- $00:D824: objects $0D-$0A, $18 and $30. */
+void mp_00D824(void) {
+    for (uint16_t o = 0x0D; o >= 0x0A; o--) { CPU_SET_A16(o); call_jsl(0x01F84F); }
+    CPU_SET_A16(0x0018); call_jsl(0x01F84F);
+    CPU_SET_A16(0x0030); call_jsl(0x01F84F);
+}
+
+/* ---- $00:D590: the save/load screen's sprites as $D5F5 draws them, with
+ * each object's display data loaded first ($F825); DB as the caller has it. */
+void mp_00D590(void) {
+    call_jsr(0x00D659);
+    uint16_t ptr = bus_read16(g_cpu.DB, 0x1980);
+    if (!(ptr & 0x8000)) { g_cpu.X = 0x0070; g_cpu.Y = 0x00CC; CPU_SET_A16(ptr); call_jsl(0x01F91E); }
+    g_cpu.X = 0x0049; g_cpu.Y = 0x00AE; CPU_SET_A16(0x008C); call_jsl(0x01F91E);
+    for (uint16_t o = 0x16; o >= 0x0E; o--) {
+        CPU_SET_A16(o); call_jsl(0x01F825);
+        CPU_SET_A16(o); call_jsl(0x01F84F);
+    }
+    CPU_SET_A16(0x0019); call_jsl(0x01F825);
+    CPU_SET_A16(0x0019); call_jsl(0x01F84F);
+    g_cpu.X = 0x0080; g_cpu.Y = 0x007A; CPU_SET_A16(0x0045); call_jsl(0x01F91E);
+    CPU_SET_A16(0x0017); call_jsl(0x01F825);
+    CPU_SET_A16(0x0017); call_jsl(0x01F84F);
+    CPU_SET_A16(0x0018); call_jsl(0x01F84F);
+}
+
+/* ---- $00:D842: progress setup: total = $0555/$0557 / 100 into $0559/
+ * $055B (one percent), step $0551/$0553 = -1, shown ($055D = -1). */
+void mp_00D842(void) {
+    uint8_t db = g_cpu.DB;
+    push16(bus_read16(db, 0x0557));
+    push16(bus_read16(db, 0x0555));
+    push16(0x0000);
+    push16(0x0064);
+    call_jsl(0x01DD79);
+    bus_write16(db, 0x0559, pull16());
+    bus_write16(db, 0x055B, pull16());
+    bus_write16(db, 0x0551, 0xFFFF);
+    bus_write16(db, 0x0553, 0xFFFF);
+    bus_write16(db, 0x055D, 0xFFFF);
+    CPU_SET_A16(0xFFFF);
+}
+
+/* ---- $00:D73C: the 13-byte HDMA table at $00:D74E to $7E:4000. */
+void mp_00D73C(void) {
+    for (int x = 0x0C; x >= 0; x--) bus_write8(0x7E, (uint16_t)(0x4000 + x), bus_read8(g_cpu.DB, (uint16_t)(0xD74E + x)));
+    g_cpu.X = 0xFFFF;
+}
+
+/* ---- $00:D52C: A = pointer (DB) to 11 bytes: the first ten become the
+ * save slots' states $1A85 + 8k (byte << 8 | $FF, last slot first), the
+ * eleventh $1ADD. */
+void mp_00D52C(void) {
+    uint16_t ptr = CPU_A16();
+    uint32_t base = ((uint32_t)g_cpu.DB << 16) + ptr;
+#define PB(y) bus_read8((uint8_t)((base + (y)) >> 16), (uint16_t)(base + (y)))
+    uint16_t x = 0x0048;
+    for (int y = 9; y >= 0; y--, x = (uint16_t)(x - 8))
+        bus_write16(g_cpu.DB, (uint16_t)(0x1A85 + x), (uint16_t)((PB(y) << 8) | 0x00FF));
+    bus_write16(g_cpu.DB, 0x1ADD, (uint16_t)((PB(10) << 8) | 0x00FF));
+#undef PB
+    g_cpu.X = x; g_cpu.Y = 0x000A;
+    CPU_SET_A16(ptr);
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00D590, mp_00D590);
+    func_table_register(0x00D842, mp_00D842);
+    func_table_register(0x00D73C, mp_00D73C);
+    func_table_register(0x00D52C, mp_00D52C);
+
+    func_table_register(0x01DD79, mp_01DD79);
+    func_table_register(0x00D659, mp_00D659);
+    func_table_register(0x00D5F5, mp_00D5F5);
+    func_table_register(0x00D824, mp_00D824);
+
+    func_table_register(0x01EDDB, mp_01EDDB);
+    func_table_register(0x019130, mp_019130);
+    func_table_register(0x01916E, mp_01916E);
+    func_table_register(0x0191AC, mp_0191AC);
+    func_table_register(0x01ECD5, mp_01ECD5);
+    func_table_register(0x01ED03, mp_01ED03);
+    func_table_register(0x01EDAB, mp_01EDAB);
+    func_table_register(0x01EDCA, mp_01EDCA);
+    func_table_register(0x01EFB9, mp_01EFB9);
+
     func_table_register(0x009CC7, mp_009CC7);
     func_table_register(0x009E76, mp_009E76);
     func_table_register(0x009760, mp_009760);

@@ -343,7 +343,548 @@ void mp_00ED76(void) {
     staff_marker(x, last);
 }
 
+/* ---- $00:F6AC: the play cursor / conductor sprite. While playing ($0EA2
+ * bit 0 clear) it walks with $0E9E (+$20 per beat, $0E92); otherwise the
+ * staff scrolls ($09E2). $0EA6/$0EA4 = its column / screen x. Jumping
+ * ($0EAA) follows the arc at $00:F7B4; else the walk frames $14A/$14B
+ * (+$2D in mode 4) every $0C30 bit 12. Its OAM entries get priority 3 and
+ * their first two words swapped. */
+void mp_00F6AC(void) {
+    uint8_t db = g_cpu.DB;
+#define R16(o)    bus_read16(db, (uint16_t)(o))
+#define W16(o, v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+    uint16_t oam = R16(0x0446);
+    uint16_t x = R16(0x0E9E);
+    uint16_t beat = (uint16_t)(((R16(0x0C30) & 0xFF00) >> 8) >> 3);
+    if (!(R16(0x0EA2) & 0x0001)) {
+        if (R16(0x0E92) != 0) W16(0x0E9E, R16(0x0E9E) + 0x20);
+        x = (uint16_t)(beat + R16(0x0E9E));
+    } else {
+        if (R16(0x0E92) != 0) W16(0x09E2, R16(0x09E2) + 0x20);
+        W16(0x09E0, (uint16_t)(beat + R16(0x09E2)));
+    }
+    W16(0x0EA6, (uint16_t)(x - 8));
+    W16(0x0EA4, (uint16_t)(x + R16(0x09E0) - 0x68));
+    uint16_t y = 0x0028, a;
+    if (R16(0x0EAA) != 0) {
+        uint16_t t;
+        if (R16(0x0EAA) != 0x0002) {
+            W16(0x0EAA, 0x0002);
+            W16(0x0EA8, R16(0x0EA4));
+            t = 0;
+        } else {
+            t = (uint16_t)(R16(0x0EA4) - R16(0x0EA8));
+            if (t >= 0x001F) { W16(0x0EAA, 0); t = 0x001F; }
+        }
+        y = bus_read8(db, (uint16_t)(0xF7B4 + t));
+        a = 0x014D;
+    } else {
+        if (R16(0x0C30) & 0x1000) {
+            uint16_t f = (uint16_t)(R16(0x0EA0) + 1);
+            if (f >= 0x0009) f = 0;
+            W16(0x0EA0, f);
+        }
+        a = R16(0x0EA0) < 0x0004 ? 0x014A : 0x014B;
+        if (R16(0x0EA2) == 0x0004) a = (uint16_t)(a + 0x2D);
+    }
+    CPU_SET_A16(a);
+    g_cpu.X = x;
+    g_cpu.Y = y;
+    call_jsl(0x01F91E);
+    for (int k = 0; k < 3; k++)
+        W16(0x0228 + oam + 4 * k, R16(0x0228 + oam + 4 * k) | 0x7000);
+    uint16_t w = R16(0x0228 + oam);
+    W16(0x0228 + oam, R16(0x022C + oam));
+    W16(0x022C + oam, w);
+    g_cpu.X = oam;
+    CPU_SET_A16(w);
+#undef R16
+#undef W16
+}
+
+/* ---- $00:F623: one frame of the composer while it plays: mouse, the
+ * panel under the cursor (stop $10-$27, tempo $50-$67, $68-$A7), screen
+ * ($9378, $ED76), conductor, frame. Carry set = stop was clicked. */
+void mp_00F623(void) {
+    uint8_t db = g_cpu.DB;
+#define R16(o)    bus_read16(db, (uint16_t)(o))
+    bus_write16(db, 0x0446, 0x0004);
+    call_jsr(0x008B48);
+    bool stop = false;
+    if (!(R16(0x04CA) & 0x0010)) {
+        bus_write16(db, 0x0E96, 0);
+    } else if (R16(0x0E96) != 0) {
+        call_jsr(0x00F8CC);
+    } else {
+        uint16_t cy = R16(0x04DE), cx = R16(0x04DC);
+        if (cy >= 0x00A8 && cy < 0x00BC && cx >= 0x0010) {
+            if (cx < 0x0028) {
+                if (R16(0x04CA) & 0x0020) {
+                    CPU_SET_A16(0x0006);
+                    call_jsl(0x01D368);
+                    bus_write16(db, 0x0E96, 0);
+                    stop = true;
+                }
+            } else if (cx >= 0x0050) {
+                if (cx < 0x0068) call_jsr(0x00F7D4);
+                else if (cx < 0x00A8) call_jsr(0x00F827);
+            }
+        }
+    }
+    call_jsr(0x009378);
+    call_jsr(0x00ED76);
+    call_jsr(0x00F6AC);
+    call_jsl(0x01E09B);
+    call_jsl(0x01E2CE);
+    g_cpu.flag_C = stop;
+#undef R16
+}
+
+/* ---- $00:FB47: Y tiles from A up, as tile pairs (t, t + $10) at
+ * $7E:2000 + X and $7E:2040 + X. */
+void mp_00FB47(void) {
+    uint16_t a = CPU_A16(), x = g_cpu.X, y = g_cpu.Y;
+    do {
+        write_long16(0x7E2000u + x, a);
+        write_long16(0x7E2040u + x, (uint16_t)(a + 0x10));
+        x = (uint16_t)(x + 2);
+        a++;
+        y--;
+    } while (y != 0);
+    CPU_SET_A16(a); g_cpu.X = x; g_cpu.Y = 0;
+    g_cpu.flag_Z = true; g_cpu.flag_N = false;
+}
+
+/* ---- $00:FCF4: keep a copy of the song ($09E4-$0C31 to $0C3C). */
+void mp_00FCF4(void) {
+    for (int x = 0x024C; x >= 0; x -= 2)
+        bus_write16(g_cpu.DB, (uint16_t)(0x0C3C + x), bus_read16(g_cpu.DB, (uint16_t)(0x09E4 + x)));
+}
+
+/* ---- $00:FE21: X = column, Y = its map offset (DB = $7F): the two
+ * end-of-measure marker tiles from $02:C3E0/$02:C420 (+8 for the last
+ * column of a group), from the third row of a column on. X, Y kept. */
+void mp_00FE21(void) {
+    uint16_t x = g_cpu.X, y = g_cpu.Y;
+    uint16_t base = last_of_group(x) ? 0x0008 : 0x0000;
+    if (y >= 0x0100) {
+        uint16_t i = (uint16_t)((((uint16_t)(y - 0x0100) & 0x0060) >> 4) + base);
+        bus_write16(g_cpu.DB, (uint16_t)(0x0016 + y), bus_read16(0x02, (uint16_t)(0xC3E0 + i)));
+        bus_write16(g_cpu.DB, (uint16_t)(0x0018 + y), bus_read16(0x02, (uint16_t)(0xC420 + i)));
+    }
+    CPU_SET_A16(base);
+    g_cpu.X = x; g_cpu.Y = y;
+}
+
+/* ---- $00:FD18: draw the whole song staff into the map in bank $7F:
+ * $18D columns ($FD83), and the measure-end marker ($FE21) on columns of
+ * the song (below $0C24) whose three notes are not all set (>= 3). */
+void mp_00FD18(void) {
+    uint8_t db = g_cpu.DB;
+    g_cpu.DB = 0x7F;
+    uint16_t x = 0, y = 0x0020;
+    for (uint16_t n = 0x018D; n; n--) {
+        g_cpu.X = x; g_cpu.Y = y;
+        CPU_SET_A16(n);
+        call_jsr(0x00FD83);
+        if ((uint16_t)(x + 2) < bus_wram_read16(0x0C24) && y >= 0x0100) {
+            uint16_t t = (uint16_t)(((uint16_t)(y - 0x0100) & 0xFF80) >> 5);
+            uint16_t i = (uint16_t)((t >> 1) + t);
+            if ((bus_wram_read8((uint16_t)(0x09E4 + i)) < 3) || (bus_wram_read8((uint16_t)(0x09E6 + i)) < 3) ||
+                (bus_wram_read8((uint16_t)(0x09E8 + i)) < 3)) {
+                g_cpu.X = x; g_cpu.Y = y;
+                mp_00FE21();
+            }
+        }
+        y = (uint16_t)(y + 0x20);
+        x = (uint16_t)(x + 2);
+    }
+    g_cpu.X = x; g_cpu.Y = y;
+    CPU_SET_A16(0);
+    g_cpu.DB = db;
+}
+
+#define MR16(o)    bus_read16(g_cpu.DB, (uint16_t)(o))
+#define MW16(o, v) bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+static void sound(uint32_t fn, uint16_t a) { CPU_SET_A16(a); call_jsl(fn); }
+
+/* ---- $00:FE9E: clear the BG map ($01:E033 with $3DFF) and the staff
+ * picture in bank $7F ($4000 bytes) with what A is then. */
+void mp_00FE9E(void) {
+    CPU_SET_A16(0x3DFF);
+    call_jsl(0x01E033);
+    uint16_t a = CPU_A16();
+    for (int x = 0x3FFE; x >= 0; x -= 2) write_long16(0x7F0000u + (uint16_t)x, a);
+    g_cpu.X = 0xFFFE;
+}
+
+/* ---- $00:FF36: the 2x3 tile block at $7E:264A, queue BG upload. */
+void mp_00FF36(void) {
+    write_long16(0x7E264A, 0x2540); write_long16(0x7E264C, 0x2541);
+    write_long16(0x7E268A, 0x2550); write_long16(0x7E268C, 0x2551);
+    write_long16(0x7E26CA, 0x2560); write_long16(0x7E26CC, 0x2561);
+    CPU_SET_A16(0x2561);
+    call_jsl(0x01DE97);
+}
+
+/* ---- $00:F3C9: silence: tracks 0 of both sound queues. */
+void mp_00F3C9(void) {
+    MW16(0x0E94, 0); MW16(0x0E96, 0);
+    sound(0x01D328, 0); sound(0x01D348, 0);
+}
+
+/* ---- $00:F054: the composer's instrument row ($8D2C picks the slot):
+ * 0 nothing, 2 the eraser-like palette swap ($F954), otherwise a click
+ * selects instrument Y (its sound, tool $0E8C/$0EB4/$04D0 = Y << 8 | 3). */
+void mp_00F054(void) {
+    call_jsl(0x01E2F3);
+    MW16(0x0E94, 0); MW16(0x0E96, 0);
+    call_jsr(0x008D2C);
+    uint16_t x = g_cpu.X, a = CPU_A16();
+    if (x == 0) return;
+    if (x == 2) {                                           /* $F954 */
+        call_jsl(0x01E2F3);
+        if (!(MR16(0x04CA) & 0x0020)) return;
+        sound(0x01D368, 0x0003);
+        MW16(0x0E8C, 0x000E); MW16(0x0EB4, 0x000E);
+        uint16_t sx = 0, y = 0;
+        for (; y != 0x0040; y += 2, sx += 2) {
+            uint16_t v = read_long16(0x089C00u + sx);
+            MW16(0x1C2A + y, v); MW16(0x1CAA + y, v);
+        }
+        sx = (uint16_t)(sx + 0x01C0);
+        for (; y != 0x0080; y += 2, sx += 2) {
+            uint16_t v = read_long16(0x089C00u + sx);
+            MW16(0x1C2A + y, v); MW16(0x1CAA + y, v);
+        }
+        call_jsr(0x00E64F);
+        call_jsr(0x00FF36);
+        return;
+    }
+    uint16_t y = a;
+    if (!(MR16(0x04CA) & 0x0020)) return;
+    sound(0x01D328, (uint16_t)((uint16_t)((y + 1) << 4) | 0x0005));
+    uint16_t t = (uint16_t)((((y << 8) | (y >> 8)) & 0xFF00) | 0x0003);
+    MW16(0x0E8C, t); MW16(0x0EB4, t); MW16(0x04D0, t);
+    bus_write16(0x00, (uint16_t)(g_cpu.DP + 0xA8), (uint16_t)(t & 0xFF00));
+    call_jsr(0x0096E1);
+    call_jsr(0x00E64F);
+    call_jsr(0x00FF36);
+}
+
+/* The three notes of song column X ($09E4 + X): each note's sound on its
+ * own channel ($D328/$D348/$D368), (note + $100) >> 4 | note. */
+static uint16_t play_column(uint16_t x) {
+    static const uint32_t ch[3] = { 0x01D328, 0x01D348, 0x01D368 };
+    for (int k = 0; k < 3; k++, x = (uint16_t)(x + 2)) {
+        uint16_t v = MR16(0x09E4 + x);
+        if (v & 0x8000) continue;
+        sound(ch[k], (uint16_t)(((uint16_t)((uint16_t)(v + 0x0100) >> 4) | v) & 0x00FF));
+    }
+    return x;
+}
+static void walk_step(uint16_t add, uint16_t frame_mod) {
+    uint16_t f = (uint16_t)(MR16(0x0EA0) + 1);
+    if (f >= frame_mod) f = 0;
+    MW16(0x0EA0, f);
+    MW16(0x0E9E, (uint16_t)(MR16(0x0E9E) + add));
+}
+
+/* ---- $00:F3DE: the play button. Mario walks in, the song plays column by
+ * column at the tempo ($0C2A/$0C2C added to $0C2E/$0C30; each overflow of
+ * the high byte is a beat, $0E92), the staff scrolls once he reaches the
+ * middle ($0EA2 1, 2 at the end), looping when $0C26 is set, until the
+ * end or the stop button ($F623 carry); then he walks off. */
+void mp_00F3DE(void) {
+    call_jsl(0x01E2F3);
+    MW16(0x0E94, 0); MW16(0x0E96, 0);
+    if (!(MR16(0x04CA) & 0x0020)) return;
+    call_jsr(0x00FEB1);
+    call_jsr(0x00FF5F);
+    MW16(0x0EB2, MR16(0x0EB2) + 1);
+    sound(0x01D368, 0x0006);
+    CPU_SET_A16(0x0C10); g_cpu.X = 0x0544; g_cpu.Y = 3; mp_00FB47();
+    CPU_SET_A16(0x0C33); g_cpu.X = 0x054C; g_cpu.Y = 3; mp_00FB47();
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    uint16_t t = (uint16_t)((uint16_t)(MR16(0x0C24) - 0x10) >> 1);
+    MW16(0x0EAE, (uint16_t)((t >> 1) + t));
+    sound(0x01D328, 0); sound(0x01D348, 0);
+    MW16(0x0C2E, 0); MW16(0x0C30, 0); MW16(0x0E92, 0); MW16(0x0E90, 0);
+    MW16(0x0E9E, 0xFFF0); MW16(0x0EA6, 0xFFF0);
+    MW16(0x0EA0, 0); MW16(0x0EA2, 0); MW16(0x09E0, 0); MW16(0x09E2, 0);
+    bool stop = false;
+    do {                                                    /* walk in */
+        call_jsr(0x00F623);
+        if (g_cpu.flag_C) { stop = true; break; }
+        walk_step(2, 9);
+    } while ((uint16_t)(MR16(0x0E9E) - 0x0030) & 0x8000);
+    if (!stop) {
+        if (!((MR16(0x09E4) & MR16(0x09E6) & MR16(0x09E8)) & 0x8000)) MW16(0x0EAA, 0x0001);
+        for (;;) {                                          /* $F497 */
+            if (MR16(0x0E92) != 0) {
+                uint16_t x;
+                bool go = true;
+                if (MR16(0x0E90) == MR16(0x0EAE)) {
+                    if (MR16(0x0C26) == 0) { stop = true; break; }
+                    MW16(0x0E90, 0); MW16(0x09E0, 0); MW16(0x09E2, 0); MW16(0x0EA2, 0);
+                    MW16(0x0E9E, 0x0050);
+                    x = 0;
+                } else x = MR16(0x0E90);
+                x = play_column(x);
+                MW16(0x0E90, x);
+                if (x == MR16(0x0EAE)) {
+                    if (MR16(0x0C26) == 0) go = false;
+                    else x = 0;
+                }
+                if (go && !((MR16(0x09E4 + x) & MR16(0x09E6 + x) & MR16(0x09E8 + x)) & 0x8000))
+                    MW16(0x0EAA, 0x0001);
+            }
+            MW16(0x0E92, 0);                                /* $F53B */
+            uint32_t lo = (uint32_t)MR16(0x0C2A) + MR16(0x0C2E);
+            MW16(0x0C2E, (uint16_t)lo);
+            uint32_t hi = (uint32_t)MR16(0x0C2C) + MR16(0x0C30) + (lo >> 16);
+            MW16(0x0C30, (uint16_t)hi);
+            MW16(0x0E92, (uint16_t)(hi >> 16));             /* ROL */
+            if (MR16(0x0EA2) == 0) {
+                uint16_t a = (uint16_t)((((MR16(0x0C30) & 0xFF00) >> 8) >> 3) + MR16(0x0E9E));
+                if (a >= 0x0080) {
+                    MW16(0x0E9E, a);
+                    MW16(0x09E2, (uint16_t)(-(uint16_t)(a - 0x70)));
+                    MW16(0x0EA2, MR16(0x0EA2) + 1);
+                }
+            } else if (MR16(0x0EA2) != 0x0002) {
+                if ((uint16_t)((uint16_t)(MR16(0x09E0) + 0xE2) >> 2) >= MR16(0x0C24)) {
+                    MW16(0x0E9E, (uint16_t)(MR16(0x0E9E) - 0x80 + 0x70));
+                    MW16(0x0EA2, MR16(0x0EA2) + 1);
+                }
+            }
+            call_jsr(0x00F623);                             /* $F5A6 */
+            if (g_cpu.flag_C) { stop = true; break; }
+        }
+    }
+    /* $F5AE: walk off */
+    CPU_SET_A16(0x0C30); g_cpu.X = 0x0544; g_cpu.Y = 3; mp_00FB47();
+    CPU_SET_A16(0x0C13); g_cpu.X = 0x054C; g_cpu.Y = 3; mp_00FB47();
+    call_jsl(0x01DE97);
+    if (MR16(0x0EA2) != 0x0001)
+        MW16(0x0E9E, (uint16_t)((((MR16(0x0C30) & 0xFF00) >> 8) >> 3) + MR16(0x0E9E)));
+    MW16(0x0C2E, 0); MW16(0x0C30, 0); MW16(0x0E92, 0);
+    MW16(0x0EA2, 0x0004);
+    do {
+        call_jsr(0x00F623);
+        walk_step(4, 9);
+    } while ((uint16_t)(MR16(0x0E9E) - 0x0110) & 0x8000);
+    MW16(0x0446, 0x0004);
+    mp_00F3C9();
+    MW16(0x0EB2, 0);
+}
+#undef MR16
+#undef MW16
+
+static void mpush16(uint16_t v) {
+    bus_wram_write8(g_cpu.S, (uint8_t)(v >> 8));
+    bus_wram_write8((uint16_t)(g_cpu.S - 1), (uint8_t)v);
+    g_cpu.S = (uint16_t)(g_cpu.S - 2);
+}
+static uint16_t mpull16(void) {
+    uint16_t v = bus_wram_read16((uint16_t)(g_cpu.S + 1));
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    return v;
+}
+/* NMI on for the duration (it stays as it was): PHA of $0122 bit 7. */
+static uint16_t nmi_on(void) {
+    uint16_t was = (uint16_t)(bus_read16(g_cpu.DB, 0x0122) & 0x0080);
+    mpush16(was);
+    if (!was) call_jsl(0x01E2F3);
+    return was;
+}
+static void nmi_restore(void) { if (mpull16() == 0) call_jsl(0x01E30E); }
+
+/* Palette for the eraser (tool $0E) from $08:9C00: 32 words, then the 32
+ * words $200 bytes on, into both palette buffers. */
+static void eraser_palette(void) {
+    uint16_t sx = 0, y = 0;
+    for (; y != 0x0040; y += 2, sx += 2) {
+        uint16_t v = read_long16(0x089C00u + sx);
+        bus_write16(g_cpu.DB, (uint16_t)(0x1C2A + y), v); bus_write16(g_cpu.DB, (uint16_t)(0x1CAA + y), v);
+    }
+    sx = (uint16_t)(sx + 0x01C0);
+    for (; y != 0x0080; y += 2, sx += 2) {
+        uint16_t v = read_long16(0x089C00u + sx);
+        bus_write16(g_cpu.DB, (uint16_t)(0x1C2A + y), v); bus_write16(g_cpu.DB, (uint16_t)(0x1CAA + y), v);
+    }
+    g_cpu.X = sx; g_cpu.Y = y;
+}
+
+/* ---- $00:FEB1: before playing: if the eraser is out, back to the tool
+ * in $0EB4 through $9FC4 (args: $0C32 + 1 and, with a panel state, $0EB6
+ * + 2), with NMI on meanwhile. */
+void mp_00FEB1(void) {
+    uint8_t db = g_cpu.DB;
+    if (bus_read16(db, 0x0E8C) != 0x000F) return;
+    bus_write16(db, 0x0E8C, bus_read16(db, 0x0EB4));
+    nmi_on();
+    uint16_t aa = bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xAA));
+    if (bus_read16(db, 0x0EB6) != 0) {
+        mpush16((uint16_t)(bus_read16(db, 0x0EB6) + 2));
+        mpush16((uint16_t)(bus_read16(db, 0x0C32) + 1));
+        mpush16(aa);
+        mpush16(0x0002);
+    } else {
+        mpush16((uint16_t)(bus_read16(db, 0x0C32) + 1));
+        mpush16(aa);
+        mpush16(0x0001);
+    }
+    call_jsr(0x009FC4);
+    nmi_restore();
+}
+
+/* ---- $00:FF5F: the current instrument's palette ($96E1 with $A8 = the
+ * tool's high byte), or the eraser's; with NMI on meanwhile. */
+void mp_00FF5F(void) {
+    nmi_on();
+    uint16_t t = bus_read16(g_cpu.DB, 0x0E8C);
+    if (t != 0x000E) {
+        bus_write16(0x00, (uint16_t)(g_cpu.DP + 0xA8), (uint16_t)(t & 0xFF00));
+        call_jsr(0x0096E1);
+    } else {
+        eraser_palette();
+    }
+    call_jsr(0x00E64F);
+    nmi_restore();
+}
+
+#define MR(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+#define MW(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+static void loop_tiles(void) {
+    CPU_SET_A16(MR(0x0C26) == 0 ? 0x0C16 : 0x0C36);
+    g_cpu.X = 0x0554; g_cpu.Y = 3;
+    mp_00FB47();
+}
+
+/* ---- $00:F7D4: the loop button: toggle $0C26 (undo copy kept), its
+ * tiles, redraw the staff, one frame. */
+void mp_00F7D4(void) {
+    MW(0x0E94, 0); MW(0x0E96, 0);
+    if (!(MR(0x04CA) & 0x0020)) return;
+    mp_00FCF4();
+    call_jsr(0x00FEB1);
+    call_jsr(0x00FF5F);
+    CPU_SET_A16(0x0006); call_jsl(0x01D368);
+    mp_00FCF4();
+    MW(0x0C26, MR(0x0C26) ^ 0x0001);
+    loop_tiles();
+    call_jsl(0x01DE97);
+    call_jsr(0x00FD18);
+    call_jsl(0x01E2F3);
+    call_jsl(0x01E2CE);
+}
+
+/* ---- $00:F0A4: a click on the staff. The end-marker tool ($0E) moves the
+ * song's end ($0C24); the eraser ($0F) removes the note under the cursor
+ * (the others in the column move up) or, on the end column, resets the
+ * end to $310; any other tool puts its note there (sound first), unless the
+ * column's three slots are taken. Right click in the panel state $099F:
+ * clear button ($FA65). Each change keeps an undo copy ($FCF4). */
+void mp_00F0A4(void) {
+    MW(0x0E94, 0); MW(0x0E96, 0); MW(0x0EB6, 0);
+    if (MR(0x099F) != 0 && (MR(0x04CA) & 0x0002)) {
+        MW(0x04CA, 0x0020);
+        call_jsl(0x01E2F3);                                 /* $FA65 */
+        if (!(MR(0x04CA) & 0x0020)) return;
+        MW(0x0EB6, 0);
+        CPU_SET_A16(0x0004); call_jsl(0x01D368);
+        mpush16(0x0006);
+        mpush16(bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xAA)));
+        mpush16(0x0001);
+        call_jsr(0x009FC4);
+        call_jsr(0x00FD06);
+        call_jsr(0x00FD18);
+        call_jsl(0x01E2CE);
+        loop_tiles();
+        call_jsl(0x01DE97);
+        call_jsl(0x01E2CE);
+        call_jsr(0x00FA35);
+        return;
+    }
+    if (!(MR(0x04CA) & 0x0040)) return;
+    if (MR(0x04D0) == 0x000E) {
+        uint16_t a = (uint16_t)(((uint16_t)(MR(0x04DC) + MR(0x09E0) - 8) >> 2) & 0xFFF8);
+        if ((uint16_t)(a - 0x0018) & 0x8000) return;
+        if (!((uint16_t)(a - 0x0311) & 0x8000)) return;
+        mp_00FCF4();
+        MW(0x0C24, a);
+        CPU_SET_A16(0x000F); call_jsl(0x01D368);
+        call_jsr(0x00FD18);
+        return;
+    }
+    uint16_t a = (uint16_t)(MR(0x04DC) + MR(0x09E0) - 0x40);
+    if (a & 0x8000) return;
+    uint16_t c = (uint16_t)(a >> 5);
+    uint16_t x = (uint16_t)(((c << 1) + c) << 1);
+    uint16_t t = (uint16_t)((uint16_t)(MR(0x0C24) - 0x10) >> 1);
+    uint16_t last = (uint16_t)((t >> 1) + t);
+    if (last == x) {                                        /* the end column */
+        if (MR(0x04D0) != 0x000F) return;
+        mp_00FCF4();
+        CPU_SET_A16(0x000B); call_jsl(0x01D368);
+        MW(0x0C24, 0x0310);
+        call_jsr(0x00FD18);
+        return;
+    }
+    if (last < x) return;
+    uint16_t row = (uint16_t)((uint16_t)(MR(0x04DE) - 0x2C) >> 3);
+    if (row >= 0x000D) return;
+    uint16_t pitch = (uint16_t)(0x000D - row);
+    if (MR(0x04D0) == 0x000F) {                             /* $F1B9: erase */
+        uint16_t y = 3;
+        for (; y; y--, x = (uint16_t)(x + 2))
+            if ((MR(0x09E4 + x) & 0x00FF) == pitch) break;
+        if (!y) return;
+        mp_00FCF4();
+        if (y == 1) { x = (uint16_t)(x - 2); y++; MW(0x09E6 + x, MR(0x09E4 + x)); }
+        if (y == 2) { x = (uint16_t)(x - 2); MW(0x09E6 + x, MR(0x09E4 + x)); }
+        MW(0x09E4 + x, 0xFFFF);
+        CPU_SET_A16(0x000B); call_jsl(0x01D368);
+        call_jsr(0x00FD18);
+        return;
+    }
+    uint16_t note = (uint16_t)((MR(0x04D0) & 0xFF00) | pitch);
+    CPU_SET_A16((uint16_t)(((uint16_t)((uint16_t)(note + 0x0100) >> 4) | note) & 0x00FF));
+    call_jsl(0x01D328);
+    x = (uint16_t)(x + 4);
+    for (uint16_t y = 3; y; y--, x = (uint16_t)(x - 2)) {
+        uint16_t v = (uint16_t)(MR(0x09E4 + x) & 0x00FF);
+        if (v == pitch || v == 0x00FF) {
+            mp_00FCF4();
+            MW(0x09E4 + x, (uint16_t)((MR(0x04D0) & 0xFF00) | pitch));
+            call_jsr(0x00FD18);
+            return;
+        }
+    }
+}
+#undef MR
+#undef MW
+
 void mp_register_music(void) {
+    func_table_register(0x00F7D4, mp_00F7D4);
+    func_table_register(0x00F0A4, mp_00F0A4);
+    func_table_register(0x00FEB1, mp_00FEB1);
+    func_table_register(0x00FF5F, mp_00FF5F);
+    func_table_register(0x00FE9E, mp_00FE9E);
+    func_table_register(0x00FF36, mp_00FF36);
+    func_table_register(0x00F3C9, mp_00F3C9);
+    func_table_register(0x00F054, mp_00F054);
+    func_table_register(0x00F3DE, mp_00F3DE);
+
+    func_table_register(0x00FB47, mp_00FB47);
+    func_table_register(0x00FCF4, mp_00FCF4);
+    func_table_register(0x00FE21, mp_00FE21);
+    func_table_register(0x00FD18, mp_00FD18);
+
+    func_table_register(0x00F6AC, mp_00F6AC);
+    func_table_register(0x00F623, mp_00F623);
     func_table_register(0x00ED76, mp_00ED76);
     func_table_register(0x00FC93, mp_00FC93);
     func_table_register(0x00FDFE, mp_00FDFE);

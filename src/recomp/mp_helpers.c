@@ -14,6 +14,7 @@
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
 #include <mp/calls.h>
+#include <snesrecomp/func_table.h>
 #include <mp/mem.h>
 #include <snesrecomp/snesrecomp.h>
 
@@ -99,82 +100,111 @@ void mp_008A12(void) {
     mp_008A16();
 }
 
+/* ---- $00:A2CC (8-bit inside): A = tool. Waits out a pending DMA queue,
+ * then queues the tool's palette records: the same tool again $A322 (10
+ * bytes), else $A319 (19 bytes), for tool 1 first $A32C (55 bytes, one
+ * frame of its own); one frame. */
+void mp_00A2CC(void) {
+    uint8_t p = cpu_get_p();
+    op_sep(0x30);
+    uint8_t tool = CPU_A8();
+    uint8_t db = g_cpu.DB;
+    bus_write8(db, 0x0202, 0);
+    if (bus_read8(db, 0x0204) != 0) call_jsl(0x01E2CE);
+    uint16_t src, n;
+    if (tool == bus_read8(db, 0x09A9)) { src = 0xA322; n = 0x0A; }
+    else {
+        if (tool == 0x01) {
+            for (int x = 0x36; x >= 0; x--) bus_write8(db, (uint16_t)(0x0182 + x), bus_read8(db, (uint16_t)(0xA32C + x)));
+            bus_write8(db, 0x0202, bus_read8(db, 0x0202) + 1);
+            call_jsl(0x01E2CE);
+        }
+        src = 0xA319; n = 0x13;
+    }
+    for (int x = n - 1; x >= 0; x--) bus_write8(db, (uint16_t)(0x0182 + x), bus_read8(db, (uint16_t)(src + x)));
+    bus_write8(db, 0x0202, bus_read8(db, 0x0202) + 1);
+    call_jsl(0x01E2CE);
+    CPU_SET_A8(tool);
+    g_cpu.X = 0x00FF;
+    cpu_set_p(p);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+}
+
 /* ========================================================================
- * $00:9FC4 — Tool mode change handler
+ * $00:9FC4 — switch tool, with stack arguments. The caller pushes n words,
+ * then the tool ($00AA) and n, and JSRs; with D = S after PHD these are
+ * $05 = n, $07 = tool, $09.. = the words. On the way out the routine moves
+ * its return address over that block (TSC + 2n + 8; PLD; PLY; TCS; PHY),
+ * so the caller's stack is clean after the RTS.
  *
- * Handles transitions between tool modes (pencil, fill, stamp, etc.).
- * Manages the bomb icon animation state ($058D) based on which tool
- * transitions have a bomb effect.
- *
- * Called with stack args: tool_id (at $07 via DP), flags (at $05).
- * In the recomp, these were pushed onto the stack before calling.
+ * Changing between some tools first animates the bomb icon ($058D = -1
+ * for $10 frames, then 1 or 0). Then the tool's toolbar and cursor
+ * ($A25B, $A22D), each word through $A0B3 (after pushing the tool's word
+ * from $A0EB), its palette ($A2CC), $016C = 0, $09A9 = tool.
  * ======================================================================== */
 void mp_009FC4(void) {
-    /* Set active flag */
-    bus_wram_write16(0x0589, 0x0001);
-
-    uint16_t new_tool = bus_wram_read16(0x00AA);
-    uint16_t old_tool = bus_wram_read16(0x058F);
-
-    if (new_tool == old_tool) goto skip_bomb;
-
-    /* Check tool transition pairs for bomb effect */
-    if (new_tool == 0x0000) {
-        if (old_tool == 0x0001) goto bomb_off;
-        goto skip_bomb;
+    uint8_t db = g_cpu.DB;
+#define R16(o)    bus_read16(db, (uint16_t)(o))
+#define W16(o, v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+    uint16_t s0 = g_cpu.S, dp0 = g_cpu.DP;
+    uint16_t d = (uint16_t)(s0 - 2);
+    bus_wram_write16((uint16_t)(s0 - 1), dp0);              /* PHD */
+    g_cpu.S = d; g_cpu.DP = d;                              /* TSC; TCD */
+    W16(0x0589, 0x0001);
+    uint16_t tool = R16(0x00AA), old = R16(0x058F);
+    int bomb = 0;                                           /* 1: $A01B, 2: $A035 */
+    if (tool != old) {
+        if (tool == 0x0000) bomb = old == 0x0001 ? 2 : 0;
+        else if (tool == 0x0007) bomb = old == 0x0000 ? 0 : 2;
+        else if (tool == 0x0002) bomb = old == 0x0007 ? 3 : 1;
+        else if (tool == 0x0003) bomb = old == 0x0001 ? 1 : 3;
+        else if (tool == 0x0004) bomb = old == 0x0003 ? 3 : 1;
+        else bomb = 3;                                      /* $A02D */
     }
-    if (new_tool == 0x0007) {
-        if (old_tool == 0x0000) goto skip_bomb;
-        goto bomb_off;
+    if (bomb == 1 || bomb == 2) {
+        W16(0x058D, 0xFFFF);
+        if (!recomp_frame_wait_possible()) {                /* the ROM waits the frames */
+            CPU_SET_A16(0xFFFF);
+            recomp_set_redirect(bomb == 1 ? 0x00A021 : 0x00A03B);
+            return;
+        }
+        for (int n = 0x10; n; n--) call_jsl(0x01E2CE);
+        W16(0x058D, bomb == 1 ? 0x0001 : 0x0000);
+    } else if (bomb == 3) {
+        W16(0x058D, 0x0001);
     }
-    if (new_tool == 0x0002) {
-        if (old_tool == 0x0007) goto bomb_on;
-        goto bomb_timer;
+    W16(0x058F, R16(0x00AA));                               /* $A04A */
+    uint16_t n2 = (uint16_t)(bus_wram_read16((uint16_t)(d + 5)) << 1);
+    bus_wram_write16((uint16_t)(d + 5), n2);
+    tool = bus_wram_read16((uint16_t)(d + 7));
+    CPU_SET_A16(tool); call_jsr(0x00A25B);
+    CPU_SET_A16(tool); call_jsr(0x00A22D);
+    if (n2 != 0) {
+        uint16_t w = R16(0xA0EB + (uint16_t)(tool << 1));
+        bus_wram_write16((uint16_t)(g_cpu.S - 1), w);       /* PHA */
+        g_cpu.S = (uint16_t)(g_cpu.S - 2);
+        for (uint16_t x = 0; x != n2; x = (uint16_t)(x + 2)) {
+            g_cpu.X = x;
+            CPU_SET_A16(bus_wram_read16((uint16_t)(d + 9 + x)));
+            call_jsr(0x00A0B3);
+        }
+        g_cpu.S = (uint16_t)(g_cpu.S + 2);                  /* PLA */
     }
-    if (new_tool == 0x0003) {
-        if (old_tool == 0x0001) goto bomb_timer;
-        goto bomb_on;
-    }
-    if (new_tool == 0x0004) {
-        if (old_tool == 0x0003) goto bomb_on;
-    }
-
-bomb_timer:
-    bus_wram_write16(0x058D, 0xFFFF);
-    for (int i = 0x10; i > 0 && !g_quit; i--) {
-        mp_01E2CE();
-    }
-
-bomb_on:
-    bus_wram_write16(0x058D, 0x0001);
-    goto skip_bomb;
-
-bomb_off:
-    bus_wram_write16(0x058D, 0xFFFF);
-    for (int i = 0x10; i > 0 && !g_quit; i--) {
-        mp_01E2CE();
-    }
-    bus_wram_write16(0x058D, 0x0000);
-
-skip_bomb:
-    /* Save current tool as previous */
-    bus_wram_write16(0x058F, bus_wram_read16(0x00AA));
-
-    /* Read the tool flags from the stack args.
-     * In the original, $05 and $07 are on the DP-mapped stack.
-     * We read them from the actual stack via g_cpu.S. */
-    uint16_t flags = bus_wram_read16(g_cpu.S + 3);  /* $05 on stack frame */
-    uint16_t tool_id = bus_wram_read16(g_cpu.S + 5); /* $07 on stack frame */
-
-    /* Call tool setup via function table */
-    func_table_call(0x00A25B);  /* CODE_00A25B */
-    func_table_call(0x00A22D);  /* CODE_00A22D */
-
-    /* Additional tool-specific setup based on flags */
-    if (flags != 0) {
-        /* Look up from DATA_00A0EB dispatch table */
-        func_table_call(0x00A0EB);
-    }
+    CPU_SET_A16(bus_wram_read16((uint16_t)(d + 7)));
+    call_jsr(0x00A2CC);
+    W16(0x016C, 0);
+    W16(0x09A9, bus_wram_read16((uint16_t)(d + 7)));
+    /* TSC; ADC $05; ADC #8; PLD; PLY; TCS; PHY */
+    uint16_t ret = bus_wram_read16((uint16_t)(s0 + 1));
+    uint16_t ns = (uint16_t)(d + n2 + 8);
+    g_cpu.DP = dp0;
+    bus_wram_write16((uint16_t)(ns - 1), ret);
+    g_cpu.S = (uint16_t)(ns - 2);
+    g_cpu.Y = ret;
+    CPU_SET_A16(ns);
+    W16(0x0589, 0);
+#undef R16
+#undef W16
 }
 
 /* ========================================================================
@@ -505,11 +535,79 @@ void mp_01F825(void) {
 /* ========================================================================
  * Register all helper functions.
  * ======================================================================== */
+/* ---- $00:A451: the visible palette $0EC4: the colours $1C2A, or with
+ * $0EB8 set masked by $1CAA; queue the 10-word DMA records at $00:A49A,
+ * one frame. */
+void mp_00A451(void) {
+    uint8_t db = g_cpu.DB;
+#define R16(o)    bus_read16(db, (uint16_t)(o))
+#define W16(o, v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+    if (R16(0x0EB8) == 0) {
+        W16(0x0202, 0);
+        for (int x = 0x7E; x >= 0; x -= 2) W16(0x0EC4 + x, R16(0x1C2A + x));
+    } else {
+        for (int x = 0x7E; x >= 0; x -= 2) W16(0x0EC4 + x, R16(0x1CAA + x) & R16(0x1C2A + x));
+    }
+    uint16_t x = R16(0x0204);
+    for (uint16_t y = 0; y != 0x0014; y += 2, x += 2) W16(0x0182 + x, R16(0xA49A + y));
+    W16(0x0204, (uint16_t)(x - 2));
+    W16(0x0202, R16(0x0202) + 1);
+    g_cpu.X = (uint16_t)(x - 2); g_cpu.Y = 0x0014;
+    call_jsl(0x01E2CE);
+#undef R16
+#undef W16
+}
+void mp_00A44D(void) { call_jsr(0x00A451); }
+
+/* ---- $00:A525: queue the stamp picture $1994 (4 rows of 2 tiles from
+ * $0A:B000 + ((s & 7) + (s & $FFF8) * 2) * 64) to VRAM $46E0, one frame. */
+void mp_00A525(void) {
+    uint16_t t = bus_read16(g_cpu.DB, 0x1994);
+    uint16_t a = (uint16_t)((t & 0xFFF8) << 1);
+    uint16_t b = (uint16_t)((t & 0x0007) + a);
+    uint16_t src = (uint16_t)(((uint16_t)((b << 8) | (b >> 8)) >> 2) + 0xB000);
+    uint16_t sv[5] = { src, 0x000A, 0x46E0, 0x0002, 0x0002 };
+    for (int i = 0; i < 5; i++) {
+        bus_wram_write8(g_cpu.S, (uint8_t)(sv[i] >> 8));
+        bus_wram_write8((uint16_t)(g_cpu.S - 1), (uint8_t)sv[i]);
+        g_cpu.S = (uint16_t)(g_cpu.S - 2);
+    }
+    call_jsl(0x01E3AC);
+    bus_write16(g_cpu.DB, 0x0202, bus_read16(g_cpu.DB, 0x0202) + 1);
+    call_jsl(0x01E2CE);
+}
+void mp_00A4AD(void) { call_jsr(0x00A451); call_jsr(0x00A525); }
+
+/* ---- $01:E298: stir the random table: each of the 55 words $044C + i
+ * minus the word 31 places on (i + $3E, wrapping as i - $30), modulo
+ * $0448. A comes back as the last index ($6C, the closing PLA/PLA). */
+void mp_01E298(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t b = 0;
+    for (uint16_t y = 0; y != 0x006E; y += 2) {
+        uint16_t j = y < 0x0030 ? (uint16_t)(y + 0x003E) : (uint16_t)(y - 0x0030);
+        b = bus_read16(db, (uint16_t)(0x044C + j));
+        uint16_t v = bus_read16(db, (uint16_t)(0x044C + y));
+        uint16_t r = (uint16_t)(v - b);
+        if (v < b) r = (uint16_t)(r + bus_read16(db, 0x0448));
+        bus_write16(db, (uint16_t)(0x044C + y), r);
+    }
+    g_cpu.Y = 0x006E;
+    CPU_SET_A16(0x006C);
+}
+
 void mp_register_helpers(void) {
+    func_table_register(0x01E298, mp_01E298);
+    func_table_register(0x00A451, mp_00A451);
+    func_table_register(0x00A44D, mp_00A44D);
+    func_table_register(0x00A525, mp_00A525);
+    func_table_register(0x00A4AD, mp_00A4AD);
+
     func_table_register(0x01E7C9, mp_01E7C9);
     func_table_register(0x01E20C, mp_01E20C);
     func_table_register(0x008A12, mp_008A12);
     func_table_register(0x009FC4, mp_009FC4);
+    func_table_register(0x00A2CC, mp_00A2CC);
     func_table_register(0x00B66C, mp_00B66C);
     func_table_register(0x00B6F4, mp_00B6F4);
     func_table_register(0x00BA78, mp_00BA78);
