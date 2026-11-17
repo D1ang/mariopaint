@@ -276,15 +276,6 @@ void mp_018000(void) {
 #undef W16
 }
 
-/* $01:972D: the script command dispatcher: command A & $7F through the
- * jump table at $01:9734 (the ROM does this with the $01:E393 inline-table
- * trick, which returns into the handler with A = its address). */
-void mp_01972D(void) {
-    uint16_t i = CPU_A16() & 0x007F;
-    uint16_t h = bus_read16(0x01, (uint16_t)(0x9734 + (i << 1)));
-    CPU_SET_A16(h);
-    tail_jmp(0x010000u | h);
-}
 
 /* $01:9372: the special start (P2 code, $0565 set by the title).
  * With a bad save ($1982 set) a fixed screen and a hang ($9378).
@@ -405,7 +396,6 @@ void mp_019372(void) {
 
 void mp_register_scenes(void) {
     func_table_register(0x019372, mp_019372);
-    func_table_register(0x01972D, mp_01972D);
     func_table_register(0x018000, mp_018000);
     func_table_register(0x019F6C, mp_019F6C);
 }

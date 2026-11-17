@@ -67,7 +67,14 @@ TIMING_SENSITIVE = {"01D388"}
 JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
                 "009760", "009853", "00987B", "0098C3", "0098F8", "009C25", "009DAB", "009DFB",
                 # Gnat Attack phases, entered through $01:E393's inline tables
-                "01C012", "01AF14", "01AFDB", "01C3C4"]
+                "01C012", "01AF14", "01AFDB", "01C3C4",
+                # title states, entered through $01:8308's JMP ($8310,x)
+                "01834B", "0183B6", "0184E2", "018521", "0185A3", "018641",
+                "0187F9", "01885F", "0188E3", "018AAF",
+                # bottom-bar handlers, entered through $95E7's table
+                "009928", "00995B", "00998B", "0099E1", "009A35", "009A9E",
+                "009B63", "009B96", "009BBA", "00A4B4", "00C42A", "00C6EF",
+                "00CAD7", "00E7D9", "0096A1"]
 
 
 def snaps(d):

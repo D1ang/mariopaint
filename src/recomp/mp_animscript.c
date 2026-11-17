@@ -134,6 +134,19 @@ static void run_command(const Ctx *c, uint8_t cmd) {
      * the scripts never use them. */
 }
 
+/* $01:972D entered from the ROM's $962C (JSR with A = command byte, X =
+ * slot offset, Y = step offset, DP locals $01 = script pointer in bank
+ * $0F): the same command bodies as the native $962C uses. */
+void mp_01972D(void) {
+    Ctx c;
+    c.script = bus_read16(0x00, (uint16_t)(g_cpu.DP + 0x01));
+    c.x = g_cpu.X;
+    c.y = g_cpu.Y;
+    run_command(&c, (uint8_t)(CPU_A16() & 0x7F));
+    g_cpu.flag_M = false;                                   /* every handler ends REP #$20 */
+    g_cpu.X = c.x;
+}
+
 /* Add a signed offset to a slot coordinate and wrap it. */
 static uint16_t move(uint16_t addr, uint16_t delta, uint16_t mask) {
     uint16_t v = (uint16_t)((bus_wram_read16(addr) + delta) & mask);
@@ -262,5 +275,6 @@ void mp_01F84F(void) {
 
 void mp_register_animscript(void) {
     func_table_register(0x01962C, mp_01962C);
+    func_table_register(0x01972D, mp_01972D);
     func_table_register(0x01F84F, mp_01F84F);
 }
