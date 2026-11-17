@@ -308,7 +308,168 @@ void mp_01BE40(void) {
     g_cpu.X = x;
 }
 
+/* ---- Gnat Attack game state ($01:A5E4). Absolute addresses go through
+ * DB (the game's work bank), long ones ($00:04xx) to low WRAM. */
+#define G16(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+#define S16(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+
+/* $01:A7D0: the swatter's two hit boxes around the cursor: $30-$36 the
+ * big one (x-8..x+8, y-16..y+8), $38-$3E the small one (x-6..x+6,
+ * y-14..y+22). */
+static void swatter_boxes(void) {
+    uint16_t x = bus_wram_read16(0x04DC), y = bus_wram_read16(0x04DE);
+    S16(0x0030, x - 0x0008); S16(0x0032, x + 0x0008);
+    S16(0x0034, y - 0x0010); S16(0x0036, y + 0x0008);
+    S16(0x0038, x - 0x0006); S16(0x003A, x + 0x0006);
+    S16(0x003C, y - 0x000E);
+    uint16_t a = (uint16_t)(y + 0x0016);
+    S16(0x003E, a);
+    CPU_SET_A16(a);
+    g_cpu.flag_C = (uint32_t)(uint16_t)(y - 0x000E) + 0x0024 > 0xFFFF;   /* CLC; ADC #$24 */
+    g_cpu.flag_V = ((~((uint16_t)(y - 0x000E) ^ 0x0024)) & ((uint16_t)(y - 0x000E) ^ a) & 0x8000) != 0;
+    cpu_update_nz16(a);
+}
+
+/* Swing step: the byte pair at $01:table + 2 * step gives the sprite
+ * ($1C, low byte) and how many frames it stays ($20, high byte). */
+static void swing_step(uint16_t table, uint16_t step, bool ff_is_none) {
+    g_cpu.X = (uint16_t)(step << 1);
+    uint16_t w = bus_read16(0x01, (uint16_t)(table + g_cpu.X));
+    uint16_t spr = w & 0x00FF;
+    if (ff_is_none && spr == 0x00FF) spr = 0xFFFF;
+    S16(0x001C, spr);
+    S16(0x0020, w >> 8);
+    swatter_boxes();
+}
+
+/* $A684: next frame of a swing; steps 3 and 6 end it ($22 = 0). */
+static void swing_next(void) {
+    uint16_t step = G16(0x001E);
+    S16(0x001E, step + 1);
+    if (step == 0x0003 || step == 0x0006) { S16(0x002C, 0); S16(0x0022, 0); }
+    swing_step(0xA6B2, step, false);
+}
+
+/* $A6DA: next frame of being stung; at step 5 a life is lost ($18), and
+ * when none are left the game is over ($22 = 3). */
+static void stung_next(void) {
+    uint16_t step = G16(0x001E);
+    S16(0x001E, step + 1);
+    if (step == 0x0005) {
+        S16(0x0022, 0);
+        uint16_t lives = (uint16_t)(G16(0x0018) - 1);
+        S16(0x0018, lives);
+        if (lives & 0x8000) {                               /* game over */
+            S16(0x0022, 0x0003);
+            op_sep(0x20);
+            bus_write8(g_cpu.DB, 0x05D7, 0x09);
+            bus_write8(g_cpu.DB, 0x0047, 0x36);
+            bus_write8(g_cpu.DB, 0x020E, 0); bus_write8(g_cpu.DB, 0x0290, 0);
+            bus_write8(g_cpu.DB, 0x024F, 0); bus_write8(g_cpu.DB, 0x02D1, 0);
+            bus_write8(g_cpu.DB, 0x0049, 0); bus_write8(g_cpu.DB, 0x004A, 0);
+            op_rep(0x20);
+            call_jsr(0x01C0D3);
+            S16(0x0040, 0x0300);
+        } else {
+            S16(0x0040, 0x00C0);
+            call_jsr(0x01A44D);
+        }
+    }
+    swing_step(0xA749, step, true);
+}
+
+/* Count $20 down; when it has run out, run the next step. */
+static void countdown(void (*next)(void)) {
+    uint16_t t = G16(0x0020);
+    CPU_SET_A16(t);
+    if (!(t & 0x8000)) { S16(0x0020, t - 1); cpu_update_nz16((uint16_t)(t - 1)); return; }
+    next();
+}
+
+/* ---- $01:A5E4: the swatter, by state $22 (JSL $01E393 table at $A5EB):
+ * 0 idle (button 0x20 starts a swing), 1 swinging, 2 stung (cursor
+ * frozen), 3 game over (wait $40 frames, then start a new game: the
+ * ROM's own code from $A75F, see below). */
+void mp_01A5E4(void) {
+    uint16_t state = G16(0x0022);
+    uint16_t h = bus_read16(0x01, (uint16_t)(0xA5EB + ((state & 0x00FF) << 1)));
+    switch (h) {
+    case 0xA619:
+        S16(0x0028, bus_wram_read16(0x04DC));
+        S16(0x002A, bus_wram_read16(0x04DE));
+        S16(0x002C, 0);
+        S16(0x001C, 0);
+        if (bus_wram_read16(0x04CA) & 0x0020) {
+            S16(0x001E, 0);
+            S16(0x0020, 0xFFFF);
+            S16(0x0022, 0x0001);
+        }
+        swatter_boxes();
+        return;
+    case 0xA648:
+        S16(0x0028, bus_wram_read16(0x04DC));
+        S16(0x002A, bus_wram_read16(0x04DE));
+        if (G16(0x002C) == 0) { CPU_SET_A16(0x0008); call_jsl(0x01D348); }
+        S16(0x002C, 0x0001);
+        if (G16(0x002E) != 0 && G16(0x001E) < 0x0004) S16(0x001E, 0x0004);
+        countdown(swing_next);
+        return;
+    case 0xA6C0:
+        S16(0x002C, 0);
+        bus_wram_write16(0x04DC, G16(0x0028));
+        bus_wram_write16(0x04DE, G16(0x002A));
+        countdown(stung_next);
+        return;
+    case 0xA755:
+        if (G16(0x0040) != 0) {
+            S16(0x0040, G16(0x0040) - 1);
+            swatter_boxes();
+            return;
+        }
+        /* $A75F: start a new game. It drives frames itself ($E7C9,
+         * $E2CE x3, $E794), which a native body must not do inside the
+         * timed loop, so the genuine code takes over from here, as a JMP
+         * would; it returns to our caller through $A7D0's RTS. */
+        recomp_set_redirect(0x01A75F);
+        return;
+    default:                                                /* not in the ROM's table */
+        CPU_SET_A16(h);
+        tail_jmp(0x010000u | h);
+        return;
+    }
+}
+
+/* ---- $01:C5F8: once a frame in Gnat Attack. The pause button (bit 1 of
+ * $04CA) plays sound $F0 and opens the pause menu ($C622); leaving it
+ * with "quit" (carry set) abandons the game: S = the stack saved at $0006
+ * when the game started, and the RTS returns from there. Otherwise sound
+ * $F1, then wait for the next frame. */
+void mp_01C5F8(void) {
+    uint8_t p = cpu_get_p();                                /* PHP */
+    op_rep(0x20);
+    if (bus_wram_read16(0x04CA) & 0x0002) {
+        CPU_SET_A16(0x00F0);
+        call_jsl(0x01D308);
+        call_jsr(0x01C622);
+        if (g_cpu.flag_C) {                                 /* LDA $0006; TCS; RTS */
+            uint16_t s = G16(0x0006);
+            CPU_SET_A16(s);
+            g_cpu.S = s;
+            return;
+        }
+        CPU_SET_A16(0x00F1);
+        call_jsl(0x01D308);
+    }
+    call_jsl(0x01E2CE);
+    cpu_set_p(p);                                           /* PLP */
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+}
+#undef G16
+#undef S16
+
 void mp_register_gnat(void) {
+    func_table_register(0x01A5E4, mp_01A5E4);
+    func_table_register(0x01C5F8, mp_01C5F8);
     func_table_register(0x01A54F, mp_01A54F);
     func_table_register(0x01A5BB, mp_01A5BB);
     func_table_register(0x01BD87, mp_01BD87);

@@ -226,7 +226,125 @@ void mp_00FB5C(void) {
     g_cpu.Y = y;
 }
 
+/* ---- $00:EF21 / $00:EEC9: draw the 4-tile marker (two rows, $40 apart)
+ * at X in the staff map at $7E:2C00, clipped at the right edge. The
+ * last-of-group column uses tiles $0C76/$0C77 for its third pair. */
+/* CMP/CPX: carry = no borrow, N/Z from the difference. */
+static inline void cmp16(uint16_t a, uint16_t b) {
+    g_cpu.flag_C = a >= b;
+    cpu_update_nz16((uint16_t)(a - b));
+}
+
+static void staff_marker(uint16_t x, bool last) {
+    cmp16(x, 0x0040);
+    if (x >= 0x0040) return;
+    write_long16(0x7E2C00 + x, 0x0C74);
+    write_long16(0x7E2C40 + x, 0x8C74);
+    cmp16(x, 0x003E);
+    if (x >= 0x003E) return;
+    write_long16(0x7E2C02 + x, 0x0C6D);
+    write_long16(0x7E2C42 + x, 0x8C6D);
+    cmp16(x, 0x003C);
+    if (x >= 0x003C) return;
+    write_long16(0x7E2C04 + x, last ? 0x0C76 : 0x0C70);
+    write_long16(0x7E2C44 + x, last ? 0x0C77 : 0x0C71);
+    cmp16(x, 0x003A);
+    if (x >= 0x003A) return;
+    write_long16(0x7E2C06 + x, 0x4C74);
+    write_long16(0x7E2C46 + x, 0xCC74);
+}
+
+/* $EE0C/$EE3A: one row of staff sprites, X = right end in song pixels,
+ * Y = count - 1, $60 or $80 apart; drawn when on screen (0..$F7). */
+static void staff_sprites(uint16_t x, uint16_t y, uint16_t step) {
+    do {
+        uint16_t scroll = bus_wram_read16(0x09E0);
+        if (x >= scroll && (uint16_t)(x - scroll) < 0x00F8) {
+            uint16_t sx = (uint16_t)(x - scroll), n = y;
+            CPU_SET_A16((uint16_t)(n + 0x01A0));
+            g_cpu.X = sx;
+            g_cpu.Y = 0x0020;
+            call_jsl(0x01F91E);
+        }
+        x = (uint16_t)(x - step);
+        y = (uint16_t)(y - 1);
+    } while (!(y & 0x8000));
+    g_cpu.X = x;
+    g_cpu.Y = y;
+}
+
+/* ---- $00:ED76: one frame of the music composer's screen. Marks the note
+ * under the eraser, puts Mario (or, in state 5, the fixed sprite set)
+ * and the two scroll knobs into OAM, draws the notes, the staff map and
+ * the control panel. When not playing ($0EB2 = 0) it also draws the
+ * measure sprites ($EE01) and, with the cursor over the measure bar, the
+ * marker of the measure under it ($EE60..$EF6D). */
+void mp_00ED76(void) {
+    call_jsr(0x00F1FD);
+    if ((bus_wram_read16(0x1A7E) & 0x00FF) != 0x0005) {
+        CPU_SET_A16(0x004D);
+        call_jsl(0x01F84F);
+    } else {                                                /* $ED8D */
+        bus_wram_write16(0x022A, 0xB0C8);
+        bus_wram_write16(0x022C, 0x3DE8);
+        bus_wram_write16(0x022E, 0xB0D8);
+        bus_wram_write16(0x0230, 0x3DEA);
+        bus_wram_write16(0x0232, 0xB8E8);
+        bus_wram_write16(0x0234, 0x3DFC);
+    }
+    bus_wram_write16(0x0236, (uint16_t)((uint16_t)((bus_wram_read16(0x0C28) >> 2) + 0x0071) | 0xAC00));
+    bus_wram_write16(0x0238, 0x3BDF);
+    bus_wram_write16(0x023A, (uint16_t)((uint16_t)((bus_wram_read16(0x09E0) >> 6) + 0x00BF) | 0x9F00));
+    bus_wram_write16(0x023C, 0x37EC);
+    bus_wram_write16(0x0426, (uint16_t)((bus_wram_read16(0x0426) & 0xF003) | 0x0028));
+    bus_wram_write16(0x0446, 0x0018);
+    call_jsr(0x00FB5C);
+    call_jsr(0x00FE54);
+    call_jsl(0x01E998);
+    uint16_t a = bus_wram_read16(0x0EB2);
+    CPU_SET_A16(a);
+    cpu_update_nz16(a);
+    if (a != 0) return;
+
+    if (bus_wram_read16(0x0C32) == 0) staff_sprites(0x0BF0, 0x001F, 0x0060);   /* $EE01 */
+    else staff_sprites(0x0BD0, 0x0017, 0x0080);                                 /* $EE34 */
+
+    /* $EE60: the cursor must be over the measure bar, not holding the
+     * eraser or tool $0E. */
+    a = bus_wram_read16(0x04D0);
+    CPU_SET_A16(a);
+    if (a == 0x000E || a == 0x000F) { cmp16(a, a); return; }
+    uint16_t cy = bus_wram_read16(0x04DE), cx = bus_wram_read16(0x04DC);
+    if (cy < 0x0085) { CPU_SET_A16(cy); cmp16(cy, 0x0085); return; }
+    if (cy >= 0x0093) { CPU_SET_A16(cy); cmp16(cy, 0x0093); return; }
+    CPU_SET_A16(cx);
+    if (cx & 0x8000) { cpu_update_nz16(cx); return; }
+    if (cx >= 0x0100) { cmp16(cx, 0x0100); return; }
+    uint16_t scroll = bus_wram_read16(0x09E0);
+    uint16_t sum = (uint16_t)(scroll + cx);
+    a = (uint16_t)(sum - 0x0040);
+    if (a & 0x8000) { CPU_SET_A16(a); cmp16(sum, 0x0040); return; }
+    a = (uint16_t)(((a >> 2) & 0xFFF8) + 0x0010);
+    CPU_SET_A16(a);
+    if (a >= bus_wram_read16(0x0C24)) { cmp16(a, bus_wram_read16(0x0C24)); return; }
+    uint16_t col = (uint16_t)(a + 2);                       /* PHA */
+    uint16_t fine = scroll & 0x001F;                        /* PHA */
+    uint16_t x = (uint16_t)(((uint16_t)((uint16_t)(((uint16_t)(fine + cx) & 0xFFE0) - fine) + 7) & 0xFFF8) >> 2);
+    g_cpu.X = x;
+    a = read_long16(0x7E2C00 + x);
+    if (a == 0x0C74) {                                      /* already drawn: PLA */
+        CPU_SET_A16(col);
+        g_cpu.flag_C = true;
+        cpu_update_nz16(col);
+        return;
+    }
+    bool last = last_of_group(col);                         /* $EEC9: JSR $FDFE */
+    CPU_SET_A16(col);
+    staff_marker(x, last);
+}
+
 void mp_register_music(void) {
+    func_table_register(0x00ED76, mp_00ED76);
     func_table_register(0x00FC93, mp_00FC93);
     func_table_register(0x00FDFE, mp_00FDFE);
     func_table_register(0x00FD83, mp_00FD83);

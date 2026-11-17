@@ -2,10 +2,8 @@
  * Mario Paint — Recompiled audio engine.
  *
  * Handles SPC700 audio data upload and per-frame command processing.
- * The SPC700 upload uses a hybrid approach: wait for IPL ready ($BBAA),
- * then write data directly to SPC RAM via bus_apu_write_ram() for
- * reliability (the polled byte-by-byte handshake has timing issues
- * in a recomp environment). This approach is proven in MiM recomp.
+ * The SPC700 upload ($01:DF25/$01:DFC1) is the ROM's own port handshake
+ * with the IPL ROM, byte by byte.
  *
  * Audio command queues at $04EC/$04FC/$050C/$051C (4 channels, 16 bytes each)
  * with write pointers at $0530-$0533 and read pointers at $052C-$052F.
@@ -16,6 +14,8 @@
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
 #include <snesrecomp/snesrecomp.h>
+#include <mp/mem.h>
+#include <snesrecomp/func_table.h>
 
 #include <stdbool.h>
 #include <stdio.h>
@@ -27,115 +27,138 @@ extern bool g_quit;
 #define REG_APUIO2  0x2142
 #define REG_APUIO3  0x2143
 
-/*
- * SPC700 upload helper — reads sequential bytes from ROM,
- * tracking position across LoROM bank boundaries.
- */
-typedef struct {
-    uint16_t ptr_lo;
-    uint8_t  ptr_bank;
-    uint16_t y;
-} SpcReadState;
-
-static uint8_t spc_read_next(SpcReadState *s) {
-    uint8_t b = bus_read8(s->ptr_bank, s->ptr_lo + s->y);
-    s->y++;
-    if ((uint32_t)(s->ptr_lo + s->y) > 0xFFFF) {
-        s->y = 0;
-        s->ptr_lo = 0x8000;
-        s->ptr_bank++;
+/* Wait until APU port 0 (8-bit) or ports 0-1 (16-bit) read back v, as the
+ * ROM's CMP $2140 / BNE loops do. The SPC700 only moves while the CPU
+ * spends cycles, so each poll lets time pass: in the timed loop the whole
+ * machine's clock, otherwise just the APU. */
+static inline void apu_poll_delay(void) {
+    if (!recomp_timed_spin(48)) bus_run_cycles(8);
+}
+static void apu_wait8(uint8_t v) {
+    for (long n = 0; bus_read8(0x00, REG_APUIO0) != v; n++) {
+        if (n > 4000000 || g_quit) { printf("mp: APU handshake timeout ($%02X)\n", v); return; }
+        apu_poll_delay();
     }
-    return b;
+}
+static void apu_wait16(uint16_t v) {
+    for (long n = 0;; n++) {
+        uint16_t got = (uint16_t)(bus_read8(0x00, REG_APUIO0) | (bus_read8(0x00, REG_APUIO1) << 8));
+        if (got == v) return;
+        if (n > 4000000 || g_quit) { printf("mp: APU handshake timeout ($%04X)\n", v); return; }
+        apu_poll_delay();
+    }
 }
 
-static uint16_t spc_read_next16(SpcReadState *s) {
-    uint8_t lo = spc_read_next(s);
-    uint8_t hi = spc_read_next(s);
-    return (uint16_t)(lo | (hi << 8));
+/* ---- $01:DFC1: step Y through the upload data at [$CC],Y. When Y passes
+ * $7FFF the pointer moves to the next bank's $8000 half: INC $CE twice,
+ * a dummy LDA [$CC] / STA $0000 (it reads bank+2 and stores into DB:0000,
+ * and replaces A), DEC $CE, Y = 0. INC/DEC/LDA/STA have the width M has,
+ * so with a 16-bit A $CF is carried into as well. */
+static void dfc1(uint16_t dp, bool m8) {
+    g_cpu.Y = (uint16_t)(g_cpu.Y + 1);
+    if (!(g_cpu.Y & 0x8000)) { cpu_update_nz16(g_cpu.Y); return; }
+    uint16_t ce = (uint16_t)(dp + 0xCE);
+    if (m8) {
+        bus_wram_write8(ce, (uint8_t)(bus_wram_read8(ce) + 2));
+        uint32_t ptr = dp_long_ptr(dp, 0xCC);
+        uint8_t v = bus_read8((uint8_t)(ptr >> 16), (uint16_t)ptr);
+        CPU_SET_A8(v);
+        bus_write8(g_cpu.DB, 0x0000, v);
+        bus_wram_write8(ce, (uint8_t)(bus_wram_read8(ce) - 1));
+    } else {
+        bus_wram_write16(ce, (uint16_t)(bus_wram_read16(ce) + 2));
+        uint16_t v = read_long16(dp_long_ptr(dp, 0xCC));
+        CPU_SET_A16(v);
+        bus_write16(g_cpu.DB, 0x0000, v);
+        bus_wram_write16(ce, (uint16_t)(bus_wram_read16(ce) - 1));
+    }
+    g_cpu.Y = 0x0000;
+    g_cpu.flag_Z = true;
+    g_cpu.flag_N = false;
 }
+void mp_01DFC1(void) { dfc1(g_cpu.DP, g_cpu.flag_M); }
+
+/* LDA [$CC],Y with D = 0. */
+static uint8_t upload_byte(void) {
+    uint32_t a = (dp_long_ptr(0, 0xCC) + g_cpu.Y) & 0xFFFFFF;
+    return bus_read8((uint8_t)(a >> 16), (uint16_t)a);
+}
+static uint16_t upload_word(void) { return read_long16(dp_long_ptr(0, 0xCC) + g_cpu.Y); }
 
 /* ========================================================================
- * $01:DF25 — SPC700 audio data upload
+ * $01:DF25 — upload a program/data set to the SPC700 through the IPL ROM's
+ * port protocol. [$CC] points at blocks of [u16 size][u16 dest][bytes],
+ * ended by size 0 with dest = where the SPC700 starts running.
  *
- * Hybrid upload: waits for IPL ready ($BBAA), then writes data
- * directly to SPC RAM via bus_apu_write_ram() for reliability.
- * The polled byte-by-byte handshake protocol has cycle-level timing
- * dependencies that are hard to satisfy in a recomp environment.
- *
- * Data format: [u16 size][u16 dest][size bytes]...
- * Terminated by a block with size=0 (dest becomes execution address).
- *
- * Source pointer read from DP $CC-$CE.
+ * The pointer is split as the ROM does it: $CC becomes $8000 and Y holds
+ * the offset, so $01:DFC1 can carry into the next bank. Port 0 carries the
+ * byte counter (echoed by the SPC700), port 1 the byte; each block starts
+ * with the kick value (counter + 4, never 0) and port 1 = 1 (more to come)
+ * or 0 (jump to the address in ports 2-3).
  * ======================================================================== */
 void mp_01DF25(void) {
-    /* Save audio queue state */
-    bus_wram_write8(0x052C, bus_wram_read8(0x0530));
-    bus_wram_write8(0x052D, bus_wram_read8(0x0531));
-    bus_wram_write8(0x052E, bus_wram_read8(0x0532));
-    bus_wram_write8(0x052F, bus_wram_read8(0x0533));
+    uint8_t p = cpu_get_p();                                /* PHP PHB PHD */
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+    g_cpu.DB = 0x01;                                        /* PHK PLB */
+    g_cpu.DP = 0x0000;                                      /* PEA $0000 PLD */
 
-    /* Get source pointer from DP $CC-$CE */
-    uint8_t src_lo = bus_wram_read8(0xCC);
-    uint8_t src_hi = bus_wram_read8(0xCD);
-    uint8_t src_bank = bus_wram_read8(0xCE);
-    uint16_t src_addr = ((uint16_t)src_hi << 8) | src_lo;
+    for (int i = 0; i < 4; i++)                             /* SEP #$30 */
+        bus_wram_write8((uint16_t)(0x052C + i), bus_wram_read8((uint16_t)(0x0530 + i)));
 
-    /* Fix up source pointer in DP */
-    bus_wram_write8(0xCC, 0x00);
-    bus_wram_write8(0xCD, 0x80);
+    g_cpu.Y = (uint16_t)(bus_wram_read16(0x00CC) - 0x8000); /* REP #$30 */
+    bus_wram_write16(0x00CC, 0x8000);
+    CPU_SET_A16(0xBBAA);
+    apu_wait16(0xBBAA);
+    CPU_SET_A8(0xCC);                                       /* SEP #$20 */
 
-    SpcReadState rs;
-    rs.ptr_lo = src_addr;
-    rs.ptr_bank = src_bank;
-    rs.y = 0;
+    for (;;) {                                              /* $DF8E */
+        uint8_t kick = CPU_A8();                            /* PHA */
+        CPU_SET_A16(upload_word());                         /* REP #$20: size */
+        dfc1(0, false);
+        dfc1(0, false);
+        g_cpu.X = CPU_A16();                                /* TAX */
+        CPU_SET_A16(upload_word());                         /* destination */
+        dfc1(0, false);
+        dfc1(0, false);
+        bus_write16(0x00, REG_APUIO2, CPU_A16());
+        bool more = g_cpu.X >= 0x0001;                      /* SEP #$20; CPX #1 */
+        CPU_SET_A8(more ? 1 : 0);                           /* LDA #0; ROL */
+        bus_write8(0x00, REG_APUIO1, CPU_A8());
+        g_cpu.flag_V = more;                                /* ADC #$7F */
+        CPU_SET_A8(kick);                                   /* PLA */
+        bus_write8(0x00, REG_APUIO0, kick);
+        apu_wait8(kick);
+        if (!more) break;                                   /* BVS $DF64 */
 
-    printf("mp: SPC700 upload from $%02X:%04X\n", src_bank, src_addr);
-
-    /* Wait for SPC700 ready signal ($BBAA on ports 0-1) */
-    {
-        int max_spins = 200000;
-        int spins = 0;
-        while (1) {
-            bus_run_cycles(32);
-            uint8_t lo = bus_read8(0x00, REG_APUIO0);
-            uint8_t hi = bus_read8(0x00, REG_APUIO1);
-            if (lo == 0xAA && hi == 0xBB) break;
-            if (++spins > max_spins) {
-                printf("mp: WARNING: SPC700 ready timeout, proceeding with direct write\n");
-                break;
-            }
+        CPU_SET_A8(upload_byte());                          /* $DF64 */
+        dfc1(0, true);
+        op_xba();
+        CPU_SET_A8(0x00);
+        for (;;) {                                          /* $DF7B */
+            bus_write16(0x00, REG_APUIO0, CPU_A16());
+            g_cpu.X = (uint16_t)(g_cpu.X - 1);
+            if (g_cpu.X == 0) break;
+            op_xba();                                       /* $DF6E */
+            CPU_SET_A8(upload_byte());
+            dfc1(0, true);
+            op_xba();
+            apu_wait8(CPU_A8());
+            CPU_SET_A8(CPU_A8() + 1);
         }
+        apu_wait8(CPU_A8());                                /* $DF85 */
+        g_cpu.flag_C = true;
+        do {                                                /* ADC #$03; BEQ */
+            unsigned r = (unsigned)CPU_A8() + 3 + (g_cpu.flag_C ? 1 : 0);
+            g_cpu.flag_C = r > 0xFF;
+            CPU_SET_A8(r);
+        } while (CPU_A8() == 0);
     }
 
-    /* Process blocks: read headers from ROM, write data directly to SPC RAM */
-    while (1) {
-        uint16_t block_size = spc_read_next16(&rs);
-        uint16_t dest_addr = spc_read_next16(&rs);
-
-        if (block_size == 0) {
-            printf("mp: SPC700 upload done, execution at $%04X\n", dest_addr);
-
-            /* Tell the SPC700 to jump to the execution address */
-            bus_write8(0x00, REG_APUIO2, (uint8_t)(dest_addr & 0xFF));
-            bus_write8(0x00, REG_APUIO3, (uint8_t)(dest_addr >> 8));
-            bus_write8(0x00, REG_APUIO1, 0x00);  /* transfer=0 (execute) */
-            bus_write8(0x00, REG_APUIO0, 0xCC);  /* command byte */
-
-            /* Give the SPC700 time to process and start the program */
-            bus_run_cycles(17088);
-            break;
-        }
-
-        printf("mp:   block: %u bytes -> SPC $%04X\n", block_size, dest_addr);
-
-        /* Copy block data directly into SPC700 RAM */
-        uint16_t spc_ptr = dest_addr;
-        for (uint16_t i = 0; i < block_size; i++) {
-            uint8_t byte = spc_read_next(&rs);
-            bus_apu_write_ram(spc_ptr, byte);
-            spc_ptr++;
-        }
-    }
+    g_cpu.DP = dp;                                          /* PLD PLB PLP */
+    g_cpu.DB = db;
+    cpu_set_p(p);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
 }
 
 /* ========================================================================
@@ -371,6 +394,7 @@ void mp_01DFD3(void) {
  * ======================================================================== */
 void mp_register_audio(void) {
     func_table_register(0x01DF25, mp_01DF25);
+    func_table_register(0x01DFC1, mp_01DFC1);
     func_table_register(0x01D308, mp_01D308);
     func_table_register(0x01D328, mp_01D328);
     func_table_register(0x01D348, mp_01D348);

@@ -90,6 +90,7 @@ void mp_01DCB9(void);  /* Bomb timer animation */
 /* Audio Engine (mp_audio.c) */
 void mp_register_audio(void);
 void mp_01DF25(void);  /* SPC700 upload */
+void mp_01DFC1(void);  /* SPC upload: step Y, carry into the next bank */
 void mp_01D308(void);  /* Audio cmd queue ch0 */
 void mp_01D328(void);  /* Audio cmd queue ch1 */
 void mp_01D348(void);  /* Audio cmd queue ch2 */
