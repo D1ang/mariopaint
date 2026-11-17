@@ -13,6 +13,7 @@
 
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
+#include <mp/calls.h>
 #include <snesrecomp/snesrecomp.h>
 
 #include <stdbool.h>
@@ -77,19 +78,12 @@ void mp_0182F6(void) {
  * each to func_table_call so they work progressively.
  * ======================================================================== */
 void mp_018308(void) {
-    uint16_t state = bus_read16(0x7F, 0x0001);
-    uint16_t idx = state * 2;
-
-    /* 12-entry dispatch table */
-    static const uint32_t states[12] = {
-        0x018328, 0x01833F, 0x01834B, 0x0183B6,
-        0x0184E2, 0x018521, 0x0185A3, 0x018641,
-        0x0187F9, 0x01885F, 0x0188E3, 0x018AAF
-    };
-
-    if (state < 12) {
-        func_table_call(states[state]);
-    }
+    /* LDA $0001 (DB = $7F here); ASL; TAX; JMP ($8310,x) in bank $01 */
+    uint16_t x = (uint16_t)(bus_read16(g_cpu.DB, 0x0001) << 1);
+    g_cpu.X = x;
+    uint16_t h = bus_read16(0x01, (uint16_t)(0x8310 + x));
+    CPU_SET_A16(x);
+    tail_jmp(0x010000u | h);
 }
 
 /* ========================================================================
@@ -146,150 +140,68 @@ static bool s_title_exit = false;
  * On skip, manipulates the stack to return directly from $018260.
  * ======================================================================== */
 void mp_018CBF(void) {
-    /* Check P2 pressed buttons for special combos */
-    uint16_t p2_pressed = bus_wram_read16(0x013C);
-
-    /* L+R+A+B = $9080 */
-    if (p2_pressed & 0x9080) {
-        uint16_t p2_held = bus_wram_read16(0x0134);
-        if (p2_held == 0x9080) {
-            bus_wram_write16(0x0565, 0x0000);
-            s_title_exit = true;
-            return;
-        }
+#define L16(o) bus_read16(0x00, (uint16_t)(o))
+    int exit = -1;                                       /* $0565 value on the way out */
+    if ((L16(0x013C) & 0x9080) && L16(0x0134) == 0x9080) exit = 0;          /* $8D1B */
+    else if ((L16(0x013C) & 0xA080) && L16(0x0134) == 0xA080) exit = 1;     /* $8D24 */
+    else if (L16(0x0134) == 0xFFFF) exit = 1;
+    else if (L16(0x04CA) & 0x0020) {
+        /* A click on the start sprite at $0792/$0794 (positions doubled):
+         * unsigned window tests, as the ROM does them. */
+        uint16_t dy = (uint16_t)((uint16_t)(L16(0x04DE) << 1) - L16(0x0794) + 0x0040);
+        uint16_t dx = (uint16_t)((uint16_t)(L16(0x04DC) << 1) - L16(0x0792) + 0x0030);
+        if (dy < 0x0048 && dx < 0x0060) exit = 0;
     }
-
-    /* L+R+A+X = $A080 */
-    if (p2_pressed & 0xA080) {
-        uint16_t p2_held = bus_wram_read16(0x0134);
-        if (p2_held == 0xA080) {
-            bus_wram_write16(0x0565, 0x0001);
-            s_title_exit = true;
-            return;
-        }
-    }
-
-    /* P2 all buttons = $FFFF */
-    uint16_t p2_held = bus_wram_read16(0x0134);
-    if (p2_held == 0xFFFF) {
-        bus_wram_write16(0x0565, 0x0001);
-        s_title_exit = true;
-        return;
-    }
-
-    /*
-     * Mouse click ($01:8CEC-$8D19). The click only starts the game when it
-     * lands ON the sprite at $0792/$0794 (positions are stored doubled), not
-     * anywhere on screen:
-     *
-     *   LDA $04DE : ASL : SEC : SBC $0794 : CLC : ADC #$0040 : CMP #$0048 : BCS out
-     *   LDA $04DC : ASL : SEC : SBC $0792 : CLC : ADC #$0030 : CMP #$0060 : BCS out
-     *
-     * i.e. an unsigned window test around the sprite. Accepting any click here
-     * (as this used to) is not just imprecise — it made every stray click exit
-     * the title, and the loop's real exit path never ran.
-     */
-    uint16_t buttons = bus_wram_read16(0x04CA);
-    if (buttons & 0x0020) {
-        uint16_t y_rel = (uint16_t)((uint16_t)(bus_wram_read16(0x04DE) << 1)
-                                    - bus_wram_read16(0x0794) + 0x0040);
-        if (y_rel < 0x0048) {
-            uint16_t x_rel = (uint16_t)((uint16_t)(bus_wram_read16(0x04DC) << 1)
-                                        - bus_wram_read16(0x0792) + 0x0030);
-            if (x_rel < 0x0060) {
-                bus_wram_write16(0x0565, 0x0000);
-                s_title_exit = true;
-                return;
-            }
-        }
-    }
-
-    /* No skip — frame sync and continue */
-    mp_01E2CE();
+    if (exit < 0) { call_jsl(0x01E2CE); return; }        /* $8D30 */
+    bus_write16(0x00, 0x0565, (uint16_t)exit);
+    /* $8D2B: LDA $0003; TCS; RTS - straight out of the title loop to the
+     * stack point $01:8000 kept in $7F:0003 (DB is $7F here). */
+    g_cpu.S = bus_read16(g_cpu.DB, 0x0003);
+    CPU_SET_A16(g_cpu.S);
+    s_title_exit = true;
+#undef L16
 }
 
 /* ========================================================================
- * $01:8260 — Title screen animation loop
+ * $01:8260 — Title screen loop
  *
- * Main loop: clears OAM, updates cursor, draws sprites,
- * runs state machine, checks input. Loops until input detected
- * or demo timeout ($1980 reaches $0800).
- *
- * Note: The original exits via a stack trick (LDA $0003; TCS; RTS in
- * $018CBF) that unwinds straight out of this loop. The recomp uses the
- * s_title_exit flag instead.
+ * Each frame: OAM cleared, the cursor moved and drawn, the title state
+ * machine, the input check ($8CBF, which leaves the loop itself through
+ * the stack point in $7F:0003). Any mouse activity clears the idle count
+ * $7F:0411; $0800 idle frames start the attract demo, and the loop leaves
+ * the same way, through the stack point.
  * ======================================================================== */
 void mp_018260(void) {
+#define R16(o)    bus_read16(g_cpu.DB, (uint16_t)(o))
+#define W16(o, v) bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
     s_title_exit = false;
-
-    while (!g_quit && !s_title_exit) {
-        /* Clear OAM (all sprites offscreen) */
-        mp_01E06F();
-
-        /* Update cursor position from mouse delta */
-        mp_0182B1();
-
-        /* Draw cursor sprite */
-        mp_0182F6();
-
-        /* Run title state machine */
-        mp_018308();
-
-        /* Check input / frame sync */
-        mp_018CBF();
-        if (g_quit || s_title_exit) break;
-
-        /*
-         * Idle counter ($01:8270-$828C). Any mouse activity at all — X or Y
-         * displacement or a button — resets it; only a fully idle stretch runs
-         * the counter up to $0800 and drops into the attract demo.
-         *
-         * The counter is $0411 and the threshold is $0800, both straight from
-         * the ROM. This used to count in $1980 with a threshold of $00C0
-         * ("~3 seconds for quick testing"), so the demo kicked in after about
-         * three idle seconds and set the demo flag $04E2, which left the game
-         * in attract mode with the toolbars unresponsive.
-         */
-        uint16_t activity = (bus_wram_read16(0x04C6) | bus_wram_read16(0x04C8)
-                             | bus_wram_read16(0x04CA)) & 0x00FF;
-        if (activity != 0) {
-            bus_wram_write16(0x0411, 0x0000);
-            continue;
-        }
-
-
-        uint16_t timer = bus_wram_read16(0x0411) + 1;
-        bus_wram_write16(0x0411, timer);
-
-        if (timer >= 0x0800) {
-            /* Demo timeout — set up demo playback */
-            bus_wram_write16(0x04DC, 0x0080);
-            bus_wram_write16(0x04DE, 0x0080);
-
-            func_table_call(0x0FC00E);  /* Start demo */
-
-            bus_wram_write16(0x0448, 0x0100);
-            uint16_t seed = bus_wram_read16(0x02);
-            CPU_SET_A16(seed);
-            mp_01E238();
-
-            break;  /* Exit title loop, demo will play */
+    for (;;) {
+        if (g_quit) return;
+        call_jsl(0x01E06F);
+        call_jsr(0x0182B1);
+        call_jsr(0x0182F6);
+        call_jsr(0x018308);
+        call_jsr(0x018CBF);
+        if (s_title_exit) break;                         /* S already at the stack point */
+        uint16_t act = (uint16_t)(bus_read16(0x00, 0x04C6) | bus_read16(0x00, 0x04C8)
+                                  | bus_read16(0x00, 0x04CA));
+        if (act != 0) { W16(0x0411, 0); continue; }
+        W16(0x0411, R16(0x0411) + 1);
+        if (R16(0x0411) == 0x0800) {
+            bus_write16(0x00, 0x04DC, 0x0080);
+            bus_write16(0x00, 0x04DE, 0x0080);
+            call_jsl(0x0FC00E);
+            bus_write16(0x00, 0x0448, 0x0100);
+            CPU_SET_A16(bus_read16(0x00, 0x0002));
+            call_jsl(0x01E238);
+            break;
         }
     }
-
-    /*
-     * Reproduce the original's exit ($01:8D2B: LDA $0003 : TCS : RTS).
-     *
-     * $018000 saves the stack pointer to $0003 before calling this loop
-     * ($01:80E9-$80ED), and the exit path restores it rather than unwinding
-     * the nested calls it was sitting in. When this function is reached by
-     * interception from interpreted code, returning normally leaves the
-     * emulated stack where the loop left it, and $018000 then resumes on an
-     * inconsistent stack: it ran away for 20 million opcodes and aborted at
-     * pc=00:0004 with SP drifted to $1B20. Restoring S here lets the
-     * intercept's simulated RTS return to the right frame.
-     */
-    g_cpu.S = bus_wram_read16(0x0003);
+    s_title_exit = false;
+    g_cpu.S = R16(0x0003);                               /* LDA $0003; TCS; RTS */
+    CPU_SET_A16(g_cpu.S);
+#undef R16
+#undef W16
 }
 
 /* ========================================================================

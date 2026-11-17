@@ -23,6 +23,7 @@ void mp_00865A(void);  /* Main loop */
 
 /* Bank 01 — DMA/PPU helpers (mp_bank01.c) */
 void mp_register_bank01(void);
+void mp_register_scenes(void);
 void mp_01E024(void);  /* OAM low table fill */
 void mp_01E033(void);  /* OAM high table fill */
 void mp_01E042(void);  /* OAM third area fill */

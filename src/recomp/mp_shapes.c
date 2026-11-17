@@ -9,6 +9,7 @@
 
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
+#include <mp/calls.h>
 #include <snesrecomp/snesrecomp.h>
 
 #include <stdbool.h>
@@ -646,10 +647,13 @@ void mp_00B7D6(void) {
  * Triggers VRAM transfer for the modified canvas area.
  * ======================================================================== */
 void mp_009C1B(void) {
-    /* A = number of frames to wait */
-    uint16_t frames = CPU_A16();
-    /* Queue VRAM transfer of modified canvas data */
-    bus_wram_write16(0x0206, bus_wram_read16(0x0206) + 1);
+    /* $00:9C1B: wait A frames (A = 0 waits 65536). */
+    uint16_t n = CPU_A16();
+    do {
+        call_jsl(0x01E2CE);
+        n = (uint16_t)(n - 1);
+        CPU_SET_A16(n);
+    } while (n != 0);
 }
 
 /* ========================================================================

@@ -22,6 +22,7 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 add_library(mp_game STATIC
     src/recomp/mp_boot.c
     src/recomp/mp_bank01.c
+    src/recomp/mp_scenes.c
     src/recomp/mp_input.c
     src/recomp/mp_gamelogic.c
     src/recomp/mp_gfxinit.c

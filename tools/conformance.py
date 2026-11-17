@@ -21,7 +21,10 @@ function is not verified). A body that calls a frame driver (main.c's
 k_frame_drivers) is checked frame by frame: it waits at the driver while the
 ROM routine runs up to its own driver call, the machines are compared there,
 and it resumes after the genuine frame. Such routines are listed with an F
-suffix (frames=N in results.txt) and run as framed intercepts. A routine that returns with M/X
+suffix (frames=N in results.txt) and run as framed intercepts. A call where an
+interrupt wrote WRAM the native body read (irqdep=N) cannot be compared - the
+ROM routine may have acted on the handler's value - and does not count either
+way. A routine that returns with M/X
 widths different from the ROM fails (its caller would run at the wrong width).
 Other register/flag mismatches are reported, not failed:
 tools/intercept_bisect.py is the check for callers that read them.
@@ -56,7 +59,10 @@ FRAME_DRIVERS = {"018260", "01E2CE", "01E794", "01E7C9"}
 # frames happen and a frame-counted animation (colour cycling, the bomb
 # fuse, Gnat Attack) can run a step ahead. That is accepted as an
 # improvement; conformance (the logic, call by call) is what must match.
-TIMING_SENSITIVE = set()
+# Native bodies that wait for an interrupt-driven variable by frames where
+# the ROM spins (a native body cannot take the NMI mid-spin): same end
+# state, different timing, so they never run as timed intercepts.
+TIMING_SENSITIVE = {"01D388"}
 
 JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
                 "009760", "009853", "00987B", "0098C3", "0098F8", "009C25", "009DAB", "009DFB",
@@ -83,7 +89,7 @@ def check_scenario(rom, name):
     if snaps(oracle) != snaps(checked):
         print(f"WARNING: validation changed the {name} run (snapshots differ from the oracle)")
     rows = re.findall(r"^VALIDATE (\w{6}) calls=(\d+) mem_fail=(\d+) reg_fail=(\d+) mx_fail=(\d+) skipped=(\d+) "
-                      r"irq=(\d+)(?: frames=(\d+))?(.*)$", r.stderr, re.M)
+                      r"irq=(\d+)(?: frames=(\d+))?(?: irqdep=(\d+))?(.*)$", r.stderr, re.M)
     return dict(prof), executed, rows
 
 
@@ -104,8 +110,9 @@ def main():
     for name, (prof, exe, rows) in zip(names, outs):
         kind.update(prof)
         executed |= exe
-        for addr, calls, mem, reg, mx, skip, irq, frames, first in rows:
-            t = total.setdefault(addr, [0, 0, 0, 0, 0, 0, "", 0])
+        for addr, calls, mem, reg, mx, skip, irq, frames, irqdep, first in rows:
+            t = total.setdefault(addr, [0, 0, 0, 0, 0, 0, "", 0, 0])
+            t[8] += int(irqdep or 0)
             for k, v in enumerate((calls, mem, reg, mx, skip, irq)):
                 t[k] += int(v)
             t[7] += int(frames or 0)
@@ -117,7 +124,7 @@ def main():
 
     passed, verified = 0, []
     with open(os.path.join(OUT, "results.txt"), "w") as f:
-        for addr, (calls, mem, reg, mx, skip, irq, first, frames) in total.items():
+        for addr, (calls, mem, reg, mx, skip, irq, first, frames, irqdep) in total.items():
             # Calls an interrupt landed in are compared in full except for what
             # the handler itself wrote (WRAM, video memory, I/O registers).
             ok = calls > 0 and mem == 0 and mx == 0 and skip == 0
@@ -126,7 +133,7 @@ def main():
                 # F: it waits for frames, so it runs as a framed intercept.
                 verified.append(addr + ("L" if kind.get(addr) == "JSL" else "") + ("F" if frames else ""))
             f.write(f"{addr} {'PASS' if ok else 'FAIL'} calls={calls} mem_fail={mem} reg_fail={reg} mx_fail={mx} "
-                    f"skipped={skip} irq={irq} frames={frames}{first}\n")
+                    f"skipped={skip} irq={irq} frames={frames} irqdep={irqdep}{first}\n")
     rows = total
     # MP_TIMED format: what main.c's k_verified should hold.
     with open(os.path.join(OUT, "verified.txt"), "w") as f:

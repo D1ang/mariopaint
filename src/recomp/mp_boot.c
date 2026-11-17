@@ -17,6 +17,7 @@
 
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
+#include <mp/calls.h>
 #include <snesrecomp/snesrecomp.h>
 
 #include <stdio.h>
@@ -643,14 +644,10 @@ void mp_0084D5(void) {
     /* Original pushes three 16-bit values onto stack as args:
      * #$0000, #$0000, #$0001 */
     /* For now, call directly — the called function reads from stack */
-    op_lda_imm16(0x0000);
-    op_pha16();
-    op_pha16();
-    op_lda_imm16(0x0001);
-    op_pha16();
-    func_table_call(0x009FC4);
-    /* Clean up stack (3 words pushed) */
-    g_cpu.S += 6;
+    {
+        uint16_t w = 0x0000;
+        call_tool_switch(0x0000, 1, &w);                    /* $9FC4 removes its arguments */
+    }
 
     /* More frame sync */
     func_table_call(0x01E2CE);
@@ -987,6 +984,7 @@ void mp_register_all(void) {
 
     /* Bank 01 — DMA/PPU helpers */
     mp_register_bank01();
+    mp_register_scenes();
 
     /* Input / cursor */
     mp_register_input();

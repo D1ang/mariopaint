@@ -867,7 +867,45 @@ void mp_00F0A4(void) {
 #undef MR
 #undef MW
 
+/* $00:FAB5: on button $20 of $04CA, a fresh song: sound off ($01:E2F3),
+ * the play state cleared, the tempo from $0EB4, the jingle, the score
+ * $09E4.. filled with $FFFF, tempo $50, the score view ($F921), the three
+ * note-mark sprite rows ($FB47), the screen ($01:DE97), a frame, the tool
+ * switch to page $0C32 + 1, and the view refresh ($FF5F, $FD18). */
+void mp_00FAB5(void) {
+    uint8_t db = g_cpu.DB;
+#define R16(o)    bus_read16(db, (uint16_t)(o))
+#define W16(o, v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+    if (!(R16(0x04CA) & 0x0020)) return;
+    call_jsl(0x01E2F3);
+    W16(0x0EB6, 0); W16(0x0E94, 0); W16(0x0E96, 0);
+    W16(0x0E8C, R16(0x0EB4));
+    CPU_SET_A16(0x0005); call_jsl(0x01D368);
+    call_jsr(0x00FCF4);
+    for (int x = 0x023E; x >= 0; x -= 2) W16(0x09E4 + x, 0xFFFF);
+    W16(0x0C28, 0x0050);
+    CPU_SET_A16(0x0050);                                    /* the tempo for $F921 */
+    call_jsr(0x00F921);
+    W16(0x09E0, 0); W16(0x0C26, 0);
+    W16(0x0C24, 0x0310);
+    static const uint16_t rows[3][2] = { {0x0C30,0x0544}, {0x0C13,0x054C}, {0x0C16,0x0554} };
+    for (int i = 0; i < 3; i++) {
+        CPU_SET_A16(rows[i][0]); g_cpu.X = rows[i][1]; g_cpu.Y = 0x0003;
+        call_jsr(0x00FB47);
+    }
+    W16(0x1A7D, 0xFFFF);
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    uint16_t w = (uint16_t)(R16(0x0C32) + 1);
+    call_tool_switch(bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xAA)), 1, &w);
+    call_jsr(0x00FF5F);
+    call_jsr(0x00FD18);
+#undef R16
+#undef W16
+}
+
 void mp_register_music(void) {
+    func_table_register(0x00FAB5, mp_00FAB5);
     func_table_register(0x00F7D4, mp_00F7D4);
     func_table_register(0x00F0A4, mp_00F0A4);
     func_table_register(0x00FEB1, mp_00FEB1);

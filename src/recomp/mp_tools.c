@@ -90,19 +90,23 @@ void mp_0096AB(void) {
  * $B66C with $0D, $A451).
  * ======================================================================== */
 void mp_0096E1(void) {
-    uint16_t tool = bus_wram_read16(0x04D0) & 0x00FF;
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+    uint16_t a6 = bus_read16(0x00, (uint16_t)(dp + 0xA6));  /* LDA $A6 (direct page) */
+    uint16_t a8 = bus_read16(0x00, (uint16_t)(dp + 0xA8));
+    uint16_t pick = (uint16_t)(((a8 << 8) | (a8 >> 8)) | a6);   /* LDA $A8; XBA; ORA $A6 */
+    uint16_t tool = bus_read16(db, 0x04D0) & 0x00FF;
     if (tool == 0x0003) {
-        if (bus_wram_read16(0x0EB8) != 0) {                 /* 96EC -> 9725 */
-            CPU_SET_A16(bus_wram_read16(0x0EBC));
+        if (bus_read16(db, 0x0EB8) != 0) {                  /* 96EC -> 9725 */
+            CPU_SET_A16(bus_read16(db, 0x0EBC));
             call_jsr(0x00B780);
-            CPU_SET_A16(bus_wram_read16(0x0EBE));
+            CPU_SET_A16(bus_read16(db, 0x0EBE));
             call_jsr(0x00B66C);
             tail_jmp(0x00A451);
             return;
         }
-        if (bus_wram_read16(0x00A6) >= 0x0070) {           /* 96F1 -> 9714 */
-            uint16_t a8 = bus_wram_read16(0x00A8);
-            CPU_SET_A16((uint16_t)(((a8 << 8) | (a8 >> 8)) | bus_wram_read16(0x00A6)));
+        if (a6 >= 0x0070) {                                 /* 96F1 -> 9714 */
+            CPU_SET_A16(pick);
             call_jsr(0x00B6F4);
             CPU_SET_A16(0x000D);
             call_jsr(0x00B66C);
@@ -110,14 +114,11 @@ void mp_0096E1(void) {
             return;
         }
     }
-    {                                                       /* 96F8 */
-        uint16_t a8 = bus_wram_read16(0x00A8);
-        CPU_SET_A16((uint16_t)(((a8 << 8) | (a8 >> 8)) | bus_wram_read16(0x00A6)));  /* XBA; ORA $A6 */
-        call_jsr(0x00B66C);
-        if ((bus_wram_read16(0x04D0) & 0x00FF) == 0x0008)
-            CPU_SET_A16(bus_wram_read16(0x198A));          /* 970E */
-        tail_jmp(0x00B6F4);                                 /* JMP $B6F4 */
-    }
+    CPU_SET_A16(pick);                                      /* 96F8 */
+    call_jsr(0x00B66C);
+    tool = bus_read16(db, 0x04D0) & 0x00FF;                 /* LDA $04D0; AND #$FF */
+    CPU_SET_A16(tool == 0x0008 ? bus_read16(db, 0x198A) : tool);
+    tail_jmp(0x00B6F4);                                     /* JMP $B6F4 */
 }
 
 /* ========================================================================
@@ -191,37 +192,23 @@ void mp_00987B(void) {
  * Selects a drawing tool from the bottom palette/tool bar.
  * ======================================================================== */
 void mp_0098C3(void) {
-    /* Sound */
-    op_lda_imm16(0x0001);
-    func_table_call(0x01D368);
-
-    /* Clear spray/erase state */
-    bus_wram_write16(0x00B8, 0x0000);
-    bus_wram_write16(0x1992, 0x0000);
-
-    uint16_t page = bus_wram_read16(0x19FA);
-    if (page != 0) {
-        uint8_t ac = bus_wram_read8(0x00AC);
-        bus_wram_write8(0x00AC, ac - 1);
-    }
-
-    /* Update tool state */
-    mp_0096AB();
-
-    /* Push args for tool change: tool_mode, tool_id, flag */
-    uint16_t d0 = bus_wram_read16(0x04D0) & 0xFF;
-    op_pha16(); bus_wram_write16(g_cpu.S + 1, d0);
-    uint16_t aa = bus_wram_read16(0x00AA);
-    op_pha16(); bus_wram_write16(g_cpu.S + 1, aa);
-    op_lda_imm16(0x0001);
-    op_pha16(); bus_wram_write16(g_cpu.S + 1, 0x0001);
-    mp_009FC4();
-    g_cpu.S += 6;  /* Clean stack */
-
-    uint16_t a8 = bus_wram_read16(0x04D0) & 0xFF00;
-    bus_wram_write16(0x00A8, a8);
-    mp_0096E1();
-    mp_00A363();
+    /* $00:98C3: pick a tool from the bottom bar: sound 1, no spray state,
+     * the stamp page down one when $19FA, $96AB, the tool switch ($9FC4 with
+     * the tool's low byte), its palette ($A8 = high byte, $96E1) and the
+     * canvas palette record ($A363). */
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+    CPU_SET_A16(0x0001); call_jsl(0x01D368);
+    bus_write16(0x00, (uint16_t)(dp + 0xB8), 0);
+    bus_write16(db, 0x1992, 0);
+    if (bus_read16(db, 0x19FA) != 0)
+        bus_write16(0x00, (uint16_t)(dp + 0xAC), (uint16_t)(bus_read16(0x00, (uint16_t)(dp + 0xAC)) - 1));
+    call_jsr(0x0096AB);
+    uint16_t w = bus_read16(db, 0x04D0) & 0x00FF;
+    call_tool_switch(bus_read16(0x00, (uint16_t)(dp + 0xAA)), 1, &w);
+    bus_write16(0x00, (uint16_t)(dp + 0xA8), (uint16_t)(bus_read16(db, 0x04D0) & 0xFF00));
+    call_jsr(0x0096E1);
+    tail_jmp(0x00A363);
 }
 
 /* ========================================================================
@@ -230,28 +217,19 @@ void mp_0098C3(void) {
  * Selects the stamp tool (tool $03) from the palette bar.
  * ======================================================================== */
 void mp_0098F8(void) {
-    op_lda_imm16(0x0001);
-    func_table_call(0x01D368);
-
-    bus_wram_write16(0x00B8, 0x0000);
-    bus_wram_write16(0x1992, 0x0000);
-
-    bus_wram_write8(0x00AC, 0x03);
-    mp_0096AB();
-
-    /* Push tool change args */
-    op_lda_imm16(0x0003);
-    op_pha16(); bus_wram_write16(g_cpu.S + 1, 0x0003);
-    uint16_t aa = bus_wram_read16(0x00AA);
-    op_pha16(); bus_wram_write16(g_cpu.S + 1, aa);
-    op_lda_imm16(0x0001);
-    op_pha16(); bus_wram_write16(g_cpu.S + 1, 0x0001);
-    mp_009FC4();
-    g_cpu.S += 6;
-
-    bus_wram_write16(0x00A8, bus_wram_read16(0x04D0) & 0xFF00);
-    mp_0096E1();
-    mp_00A363();
+    /* $00:98F8: pick the stamp tool from the bottom bar (as $98C3, page 3). */
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+    CPU_SET_A16(0x0001); call_jsl(0x01D368);
+    bus_write16(0x00, (uint16_t)(dp + 0xB8), 0);
+    bus_write16(db, 0x1992, 0);
+    bus_write16(0x00, (uint16_t)(dp + 0xAC), 0x0003);
+    call_jsr(0x0096AB);
+    uint16_t w = 0x0003;
+    call_tool_switch(bus_read16(0x00, (uint16_t)(dp + 0xAA)), 1, &w);
+    bus_write16(0x00, (uint16_t)(dp + 0xA8), (uint16_t)(bus_read16(db, 0x04D0) & 0xFF00));
+    call_jsr(0x0096E1);
+    tail_jmp(0x00A363);
 }
 
 /* ========================================================================
@@ -431,76 +409,67 @@ void mp_009DFB(void) {
  * the current palette row and tool state.
  * ======================================================================== */
 void mp_00A363(void) {
-    bus_wram_write16(0x0202, 0x0000);
-    uint16_t wp = bus_wram_read16(0x0204);
-
-    /* Copy base DMA record from DATA_00A443 (ROM at $00:A443) */
-    for (int y = 0; y < 10; y += 2) {
-        uint16_t val = bus_read16(0x00, 0xA443 + y);
-        bus_wram_write16(0x0182 + wp + y, val);
-    }
-
-    uint16_t ab = bus_wram_read16(0x09AB);
-    if (ab != 0) {
-        /* Special mode — skip to end */
-        goto finish;
-    }
-
-    /* Determine source address for palette graphics */
-    {
-        uint16_t erase = bus_wram_read16(0x1992);
-        if (erase != 0) {
-            /* Erase tool — use fixed source */
-            bus_wram_write16(0x0183 + wp, 0xB000);  /* DATA_058000+$3000 */
-            goto finish;
-        }
-
-        uint16_t eb8 = bus_wram_read16(0x0EB8);
-        uint16_t ebe = bus_wram_read16(0x0EBE);
-        if (eb8 != 0 && (int16_t)eb8 >= 0) {
-            /* eb8 positive and nonzero — use alternate */
-            goto finish;
-        }
-
-        uint16_t pal;
-        if ((int16_t)eb8 < 0) {
-            pal = ebe & 0x00F0;
+    /* $00:A363: queue the canvas palette record (5 words from $00:A443)
+     * with the source picked by state: $09AB (one-shot, $07:F800), the
+     * stamp editor $1992 ($B000), the colour in use ($0EBE, or $A6 direct
+     * page; $F0 = $1144, $100 = $07:E800), $09D6 = $1E ($07:F000), or the
+     * custom colour with $0EB8 ($0EBC, bank $0EBA + 6). Without $1992 the
+     * window tables follow ($E64F); otherwise, and for $09AB, one frame. */
+    uint8_t p = cpu_get_p();
+    uint8_t db = g_cpu.DB;
+#define R16(o)    bus_read16(db, (uint16_t)(o))
+#define W16(o, v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+#define W8(o, v)  bus_write8(db, (uint16_t)(o), (uint8_t)(v))
+    W16(0x0202, 0);
+    uint16_t x = R16(0x0204);
+    for (uint16_t y = 0; y != 0x000A; y += 2) W16(0x0182 + x + y, R16(0xA443 + y));
+    bool frame;
+    if (R16(0x09AB) != 0) {
+        W16(0x0183 + x, 0xF800); W8(0x0185 + x, 0x07);
+        W16(0x0204, x + 9);
+        frame = true;
+    } else {
+        if (R16(0x1992) != 0) {
+            W16(0x0183 + x, 0xB000);
         } else {
-            uint16_t state = bus_wram_read16(0x09D6);
-            if (state == 0x001E) {
-                /* Music tool */
-                bus_wram_write16(0x0183 + wp, 0xF000);  /* DATA_078000+$7000 */
-                op_sep(0x20);
-                bus_wram_write8(0x0185 + wp, 0x07);
-                op_rep(0x20);
-                goto finish;
+            uint16_t a = R16(0x0EBE) & 0x00F0;
+            uint16_t eb8 = R16(0x0EB8);
+            int path;                                       /* 0: $A3A2, 1: $A3F2, 2: $A3D9 */
+            if (eb8 & 0x8000) path = 0;
+            else if (eb8 != 0) path = 1;
+            else if (R16(0x09D6) == 0x001E) path = 2;
+            else { a = bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xA6)); path = 0; }
+            if (path == 0) {
+                if (a == 0x00F0) { W16(0x0183 + x, 0x1144); W8(0x0185 + x, 0x00); }
+                else if (a == 0x0100) { W16(0x0183 + x, 0xE800); W8(0x0185 + x, 0x07); }
+                else { uint16_t h = (uint16_t)(a >> 1); W16(0x0183 + x, (uint16_t)(((h << 8) | (h >> 8)) + 0x8000)); }
+            } else if (path == 2) {
+                W16(0x0183 + x, 0xF000); W8(0x0185 + x, 0x07);
+            } else {
+                uint16_t c = R16(0x0EBC) & 0x00F0;
+                W16(0x0183 + x, (uint16_t)((uint16_t)(((c << 8) | (c >> 8)) >> 1) + 0x8000));
+                W8(0x0185 + x, (uint8_t)(bus_read8(db, 0x0EBA) + 6));
             }
-            pal = bus_wram_read16(0x00A6);
         }
-
-        if (pal == 0x00F0) {
-            /* Custom stamp palette */
-            bus_wram_write16(0x0183 + wp, 0x1A58);
-            op_sep(0x20);
-            bus_wram_write8(0x0185 + wp, 0x00);  /* Bank $00 (WRAM) */
-            op_rep(0x20);
-        } else if (pal == 0x0100) {
-            /* Special stamps */
-            bus_wram_write16(0x0183 + wp, 0xE800);
-            op_sep(0x20);
-            bus_wram_write8(0x0185 + wp, 0x07);
-            op_rep(0x20);
-        } else {
-            /* Standard ROM palette graphics */
-            uint16_t addr = (pal >> 1) + 0x8000;  /* DATA_058000 base */
-            bus_wram_write16(0x0183 + wp, addr);
+        W16(0x0204, x + 9);                                 /* $A40E */
+        frame = R16(0x1992) != 0;
+        if (!frame) {
+            g_cpu.X = x;
+            call_jsr(0x00E64F);
+            cpu_set_p(p);
+            if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+            return;
         }
     }
-
-finish:
-    /* Finish building DMA record and mark pending */
-    bus_wram_write16(0x0204, wp + 9);
-    bus_wram_write16(0x0202, 0x0001);
+    W16(0x09AB, 0);                                         /* $A437 */
+    W16(0x0202, R16(0x0202) + 1);
+    g_cpu.X = x;
+    call_jsl(0x01E2CE);
+    cpu_set_p(p);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+#undef R16
+#undef W16
+#undef W8
 }
 
 /* ========================================================================
@@ -667,7 +636,340 @@ void mp_01D597(void) {
 /* ========================================================================
  * Register all drawing tool functions.
  * ======================================================================== */
+/* The bottom-bar tool pick shared by $98F8/$9928/$995B: sound, spray state
+ * $B8, page $AC, $96AB, the tool switch with one word, the tool's palette
+ * ($A8 = high byte of $04D0, $96E1) and the canvas palette record ($A363). */
+static void pick_tool(uint16_t snd, uint16_t b8, uint16_t ac, uint16_t word) {
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+    CPU_SET_A16(snd); call_jsl(0x01D368);
+    bus_write16(0x00, (uint16_t)(dp + 0xB8), b8);
+    bus_write16(db, 0x1992, 0);
+    bus_write16(0x00, (uint16_t)(dp + 0xAC), ac);
+    call_jsr(0x0096AB);
+    call_tool_switch(bus_read16(0x00, (uint16_t)(dp + 0xAA)), 1, &word);
+    bus_write16(0x00, (uint16_t)(dp + 0xA8), (uint16_t)(bus_read16(db, 0x04D0) & 0xFF00));
+    call_jsr(0x0096E1);
+    tail_jmp(0x00A363);
+}
+/* $00:94E5: an empty slot. */
+void mp_0094E5(void) {}
+/* $00:9928: the spray can (page 4, spray on). */
+void mp_009928(void) { pick_tool(0x0001, 0x0001, 0x0004, 0x0004); }
+/* $00:995B: page 5. */
+void mp_00995B(void) { pick_tool(0x0006, 0x0000, 0x0005, 0x0005); }
+/* $00:96A1: the stamp page arrows ($01:D3BA). */
+void mp_0096A1(void) { call_jsl(0x01D3BA); }
+
+/* $00:998B: the stamp tool button: remember the previous tool ($1B10,
+ * unless it is the stamp editor), reset the stamp state, tool 6 in $04D0,
+ * the tool switch (word 6 from the canvas, 0 otherwise), $09AB set, the
+ * canvas palette record. Nothing while already stamping without a stamp. */
+void mp_00998B(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+#define R16(o)    bus_read16(db, (uint16_t)(o))
+#define W16(o, v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+    CPU_SET_A16(0x0006); call_jsl(0x01D368);
+    uint16_t t = R16(0x04D0) & 0x00FF;
+    if (t == 0x0006 && R16(0x19C0) == 0) return;
+    if (t != 0x0007) W16(0x1B10, R16(0x04D0));
+    bus_write16(0x00, (uint16_t)(dp + 0xB8), 0);
+    W16(0x1996, 0); W16(0x1998, 0); W16(0x199A, 0); W16(0x19C0, 0);
+    W16(0x04D0, (uint16_t)((R16(0x04D0) & 0xF000) | 0x0006));
+    uint16_t aa = bus_read16(0x00, (uint16_t)(dp + 0xAA));
+    uint16_t w = aa ? 0x0000 : 0x0006;
+    call_tool_switch(aa, 1, &w);
+    W16(0x09AB, R16(0x09AB) + 1);
+    call_jsr(0x00A363);
+#undef R16
+#undef W16
+}
+
+/* $00:9A35: the pencil-size button: back from the stamp tools to the tool
+ * remembered in $1B10, tool 8 with brush $1988 (size $AE = brush / 4 + 1,
+ * $198A = brush & 3, spray on for 3), $AA = 1. */
+void mp_009A35(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+#define R16(o)    bus_read16(db, (uint16_t)(o))
+#define W16(o, v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+#define DW(o, v)  bus_write16(0x00, (uint16_t)(dp + (o)), (uint16_t)(v))
+#define DR(o)     bus_read16(0x00, (uint16_t)(dp + (o)))
+    CPU_SET_A16(0x0002); call_jsl(0x01D368);
+    W16(0x1992, 0);
+    DW(0xB8, 0);
+    W16(0x1B12, R16(0x04D0));
+    uint16_t t = R16(0x04D0) & 0x00FF;
+    if (t == 0x0006 || t == 0x0007) W16(0x04D0, R16(0x1B10));
+    W16(0x04D0, (uint16_t)((R16(0x04D0) & 0xFF00) | 0x0008));
+    DW(0xAE, (uint16_t)((R16(0x1988) >> 2) + 1));
+    DW(0xAA, 0x0001);
+    uint16_t brush = R16(0x1988);
+    push_a16(brush);                                        /* kept across the switch */
+    call_tool_switch(DR(0xAA), 1, &brush);
+    uint16_t v = bus_wram_read16((uint16_t)(g_cpu.S + 1));  /* PLA */
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    W16(0x198A, v & 0x0003);
+    if ((v & 0x0003) == 0x0003) DW(0xB8, DR(0xB8) + 1);
+    DW(0xA8, (uint16_t)(R16(0x04D0) & 0xFF00));
+    call_jsr(0x0096E1);
+    tail_jmp(0x00A363);
+#undef R16
+#undef W16
+#undef DW
+#undef DR
+}
+
+/* $00:9BBA: the eraser-of-everything toggle ($AA 0 <-> 7): the switch
+ * there, $10 frames, and the switch back to the plain view. */
+void mp_009BBA(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+    CPU_SET_A16(0x0003); call_jsl(0x01D368);
+    uint16_t aa = (uint16_t)(bus_read16(0x00, (uint16_t)(dp + 0xAA)) ^ 0x0007);
+    bus_write16(0x00, (uint16_t)(dp + 0xAA), aa);
+    if (aa != 0x0007) {
+        uint16_t w[2] = { 0x0009, (uint16_t)(bus_read16(db, 0x04D0) & 0x00FF) };
+        call_tool_switch(aa, 2, w);
+        CPU_SET_A16(0x0010); call_jsl(0x009C1B);
+        uint16_t w1 = bus_read16(db, 0x04D0) & 0x00FF;
+        call_tool_switch(bus_read16(0x00, (uint16_t)(dp + 0xAA)), 1, &w1);
+    } else {
+        uint16_t w0 = 0x0000;
+        call_tool_switch(aa, 1, &w0);
+        CPU_SET_A16(0x0010); call_jsl(0x009C1B);
+        call_tool_switch(bus_read16(0x00, (uint16_t)(dp + 0xAA)), 0, 0);
+    }
+}
+
+#define TR16(o)    bus_read16(g_cpu.DB, (uint16_t)(o))
+#define TW16(o, v) bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+#define TDR(o)     bus_read16(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define TDW(o, v)  bus_write16(0x00, (uint16_t)(g_cpu.DP + (o)), (uint16_t)(v))
+
+/* The stamp editor ($A4B4 from its button, $9B33 when returning to it):
+ * $1992 set, its palette and picture ($B66C $0F, $B6F4 $1994 + 8), tool 7,
+ * the switch (word 7 on the canvas, 6 elsewhere), canvas palette record. */
+static void stamp_editor(bool upload) {
+    TW16(0x1992, 0x0001);
+    CPU_SET_A16(0x000F); call_jsr(0x00B66C);
+    CPU_SET_A16((uint16_t)(TR16(0x1994) + 8)); call_jsr(0x00B6F4);
+    TW16(0x04D0, 0x0007);
+    if (upload) { call_jsr(0x00A525); TDW(0xAE, 0); }
+    uint16_t aa = TDR(0xAA);
+    uint16_t w = aa ? 0x0006 : 0x0007;
+    call_tool_switch(aa, 1, &w);
+    tail_jmp(0x00A363);
+}
+
+/* $00:A4B4: the stamp editor button (the tool before it kept in $1B10). */
+void mp_00A4B4(void) {
+    CPU_SET_A16(0x0007); call_jsl(0x01D368);
+    uint16_t t = TR16(0x04D0) & 0x00FF;
+    if (t == 0x0007) return;
+    if (t != 0x0006) TW16(0x1B10, TR16(0x04D0));
+    stamp_editor(true);
+}
+
+/* $00:9A9E: back from the colour/pencil-size panels to the tool in $1B12
+ * (the stamp tools via $1B10), the canvas ($AA 0, or 3 with $19FA). */
+void mp_009A9E(void) {
+    CPU_SET_A16(0x0041); call_jsl(0x01D368);
+    uint16_t t = TR16(0x1B12) & 0x00FF;
+    if (t == 0x0006 || t == 0x0007) {
+        TW16(0x1B10, (uint16_t)((TR16(0x04D0) & 0xFF00) | t));
+        TW16(0x04D0, TR16(0x1B12));
+    } else {
+        TW16(0x04D0, (uint16_t)((TR16(0x04D0) & 0xFF00) | t));
+    }
+    TDW(0xAE, 0);
+    TDW(0xAA, TR16(0x19FA) ? 0x0003 : 0x0000);
+    TDW(0xB8, 0);
+    uint16_t u = TR16(0x04D0) & 0x00FF;
+    if (u == 0x0004) TDW(0xB8, TDR(0xB8) + 1);
+    if (u == 0x0007) { stamp_editor(false); return; }
+    if (u == 0x0006) {
+        uint16_t w = 0x0006;
+        call_tool_switch(TDR(0xAA), 1, &w);
+        TW16(0x09AB, TR16(0x09AB) + 1);
+        tail_jmp(0x00A363);
+        return;
+    }
+    call_tool_switch(TDR(0xAA), 1, &u);
+    TDW(0xA8, (uint16_t)(TR16(0x04D0) & 0xFF00));
+    call_jsr(0x0096E1);
+    tail_jmp(0x00A363);
+}
+
+/* $00:9B63 / $00:9B96: a brush size from the size panel ($AC - 1 into
+ * $1988; size $AE = brush / 4 + 1; $9B63 also the brush shape $198A and
+ * its picture); spray off / on; window tables ($E64F). */
+void mp_009B63(void) {
+    CPU_SET_A16(0x000B); call_jsl(0x01D368);
+    TDW(0xB8, 0);
+    uint16_t v = (uint16_t)(TDR(0xAC) - 1);
+    TW16(0x1988, v);
+    call_tool_switch(TDR(0xAA), 1, &v);
+    v = (uint16_t)(TDR(0xAC) - 1);
+    TW16(0x1988, v);
+    TDW(0xAE, (uint16_t)((v >> 2) + 1));
+    TW16(0x198A, v & 0x0003);
+    CPU_SET_A16(v & 0x0003);
+    call_jsr(0x00B6F4);
+    tail_jmp(0x00E64F);
+}
+void mp_009B96(void) {
+    CPU_SET_A16(0x000B); call_jsl(0x01D368);
+    TDW(0xB8, TDR(0xB8) + 1);
+    uint16_t v = (uint16_t)(TDR(0xAC) - 1);
+    TW16(0x1988, v);
+    TDW(0xAE, (uint16_t)((v >> 2) + 1));
+    call_tool_switch(TDR(0xAA), 1, &v);
+    tail_jmp(0x00E64F);
+}
+#undef TR16
+#undef TW16
+#undef TDR
+#undef TDW
+
+#define TR16(o)    bus_read16(g_cpu.DB, (uint16_t)(o))
+#define TW16(o, v) bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+#define TDR(o)     bus_read16(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define TDW(o, v)  bus_write16(0x00, (uint16_t)(g_cpu.DP + (o)), (uint16_t)(v))
+
+/* $00:C42A: into the music editor ($AC set: the sound $08, else $41):
+ * the tool kept in $1A04, tool 9, $AA = 2, the switch, the canvas palette
+ * record, mode $09D6 = 3. */
+void mp_00C42A(void) {
+    CPU_SET_A16(TDR(0xAC) ? 0x0008 : 0x0041); call_jsl(0x01D368);
+    TW16(0x1A04, TR16(0x04D0));
+    TW16(0x04D0, 0x0009);
+    TDW(0xAA, 0x0002);
+    call_tool_switch(0x0002, 0, 0);
+    TW16(0x09AB, TR16(0x09AB) + 1);
+    call_jsr(0x00A363);
+    TW16(0x09D6, 0x0003);
+}
+
+/* $00:C6EF: the eraser-of-everything toggle in the animation/music modes
+ * ($AA 3 <-> 4), each way a two-step switch with $10 frames between. */
+void mp_00C6EF(void) {
+    CPU_SET_A16(0x0003); call_jsl(0x01D368);
+    uint16_t aa = (uint16_t)(TDR(0xAA) ^ 0x0007);
+    TDW(0xAA, aa);
+    uint16_t t = TR16(0x04D0) & 0x00FF;
+    if (aa != 0x0004) {
+        if (t == 0x0006) {
+            uint16_t w = 0x0008;
+            call_tool_switch(aa, 1, &w);
+            CPU_SET_A16(0x0010); call_jsl(0x009C1B);
+            call_tool_switch(TDR(0xAA), 0, 0);
+            return;
+        }
+        if (t == 0x0007) t--;
+        uint16_t w[2] = { t, 0x0008 };
+        call_tool_switch(aa, 2, w);
+        CPU_SET_A16(0x0010); call_jsl(0x009C1B);
+        call_tool_switch(TDR(0xAA), 1, &t);
+        return;
+    }
+    uint16_t v;
+    if (t == 0x0006) v = TR16(0x19C0);
+    else if (t == 0x0010) v = 0x0001;
+    else {
+        uint16_t w = 0x0003;
+        call_tool_switch(aa, 1, &w);
+        CPU_SET_A16(0x0010); call_jsl(0x009C1B);
+        call_tool_switch(TDR(0xAA), 0, 0);
+        return;
+    }
+    uint16_t w[2] = { v, 0x0003 };
+    call_tool_switch(aa, 2, w);
+    CPU_SET_A16(0x0010); call_jsl(0x009C1B);
+    call_tool_switch(TDR(0xAA), 1, &v);
+}
+
+/* $00:CAD7: the colour panel: the mode kept in $09D8 (now 2), the tool in
+ * $1990 (now 9), the colour in $1B14, $AA = 9, the switch, then the colour
+ * cell's palette ($B66C below $70, else $B6F4) and the palette record. */
+void mp_00CAD7(void) {
+    CPU_SET_A16(0x0002); call_jsl(0x01D368);
+    TW16(0x09D8, TR16(0x09D6));
+    TW16(0x09D6, 0x0002);
+    TW16(0x1990, TR16(0x04D0));
+    TW16(0x04D0, 0x0009);
+    TW16(0x1B14, TDR(0xA6));
+    TDW(0xAA, 0x0009);
+    call_tool_switch(0x0009, 0, 0);
+    TW16(0x1992, 0);
+    uint16_t a8 = (uint16_t)((TR16(0x04D0) & 0xFF00) >> 8);
+    TDW(0xA8, a8);
+    uint16_t a6 = TDR(0xA6);
+    CPU_SET_A16((uint16_t)(a8 | a6));
+    call_jsr(a6 < 0x0070 ? 0x00B66C : 0x00B6F4);
+    tail_jmp(0x00A363);
+}
+
+/* $00:E7D9: the paint-can/pattern panel: $0EB8 set, spray state kept in
+ * $0EC2, the tool in $0EC0 (now 3), the pattern picture ($EB3B), $AA = 8,
+ * the switch with it and $0EBA, the tool palette and the record. */
+void mp_00E7D9(void) {
+    CPU_SET_A16(0x0002); call_jsl(0x01D368);
+    TW16(0x0EB8, 0x0001);
+    TW16(0x1992, 0);
+    TW16(0x0EC2, TDR(0xB8));
+    TDW(0xB8, 0);
+    TW16(0x0EC0, TR16(0x04D0));
+    TW16(0x04D0, 0x0003);
+    call_jsr(0x00EB3B);
+    uint16_t w[2] = { CPU_A16(), TR16(0x0EBA) };
+    TDW(0xAA, 0x0008);
+    call_tool_switch(0x0008, 2, w);
+    call_jsr(0x0096E1);
+    tail_jmp(0x00A363);
+}
+
+/* $00:99E1: the stamp-pick button (like $998B, with $19C0 = 1 and word 1). */
+void mp_0099E1(void) {
+    CPU_SET_A16(0x0006); call_jsl(0x01D368);
+    uint16_t t = TR16(0x04D0) & 0x00FF;
+    if (t == 0x0006 && TR16(0x19C0) != 0) return;
+    if (t != 0x0007) TW16(0x1B10, TR16(0x04D0));
+    TDW(0xB8, 0);
+    TW16(0x1996, 0); TW16(0x1998, 0); TW16(0x199A, 0);
+    TW16(0x19C0, 0x0001);
+    TW16(0x04D0, (uint16_t)((TR16(0x04D0) & 0xF000) | 0x0006));
+    uint16_t w = 0x0001;
+    call_tool_switch(TDR(0xAA), 1, &w);
+    TW16(0x09AB, TR16(0x09AB) + 1);
+    call_jsr(0x00A363);
+}
+#undef TR16
+#undef TW16
+#undef TDR
+#undef TDW
+
 void mp_register_tools(void) {
+    func_table_register(0x00C42A, mp_00C42A);
+    func_table_register(0x00C6EF, mp_00C6EF);
+    func_table_register(0x00CAD7, mp_00CAD7);
+    func_table_register(0x00E7D9, mp_00E7D9);
+    func_table_register(0x0099E1, mp_0099E1);
+
+    func_table_register(0x00A4B4, mp_00A4B4);
+    func_table_register(0x009A9E, mp_009A9E);
+    func_table_register(0x009B63, mp_009B63);
+    func_table_register(0x009B96, mp_009B96);
+
+    func_table_register(0x009A35, mp_009A35);
+    func_table_register(0x009BBA, mp_009BBA);
+    func_table_register(0x0094E5, mp_0094E5);
+    func_table_register(0x009928, mp_009928);
+    func_table_register(0x00995B, mp_00995B);
+    func_table_register(0x0096A1, mp_0096A1);
+    func_table_register(0x00998B, mp_00998B);
+
     func_table_register(0x008B03, mp_008B03);
     func_table_register(0x008B14, mp_008B18);  /* Wrapper */
     func_table_register(0x008B18, mp_008B18);

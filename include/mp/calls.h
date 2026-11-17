@@ -45,4 +45,21 @@ static inline void call_jsl(uint32_t addr) {
 
 static inline void tail_jmp(uint32_t addr) { func_table_call_jsr(addr); }
 
+/* PHA with a 16-bit A: the high byte first, at S. */
+static inline void push_a16(uint16_t v) {
+    bus_wram_write8(g_cpu.S, (uint8_t)(v >> 8));
+    bus_wram_write8((uint16_t)(g_cpu.S - 1), (uint8_t)v);
+    g_cpu.S = (uint16_t)(g_cpu.S - 2);
+}
+
+/* JSR $9FC4 with its stack arguments: the n words (first pushed first),
+ * the tool, n. $9FC4 removes them itself. */
+static inline void call_tool_switch(uint16_t tool, int n, const uint16_t *words) {
+    for (int i = 0; i < n; i++) push_a16(words[i]);
+    push_a16(tool);
+    push_a16((uint16_t)n);
+    CPU_SET_A16((uint16_t)n);
+    call_jsr(0x009FC4);
+}
+
 #endif

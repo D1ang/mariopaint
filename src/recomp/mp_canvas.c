@@ -8,6 +8,7 @@
 
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
+#include <mp/calls.h>
 #include <snesrecomp/snesrecomp.h>
 
 #include <stdbool.h>
@@ -100,62 +101,56 @@ void mp_019DFE(void) {
  * Input: A = pointer to DMA command list (within bank $01)
  * ======================================================================== */
 void mp_01CDE1(void) {
-    uint16_t list_ptr = CPU_A16();
-
-    /* Wait for DMA queue to drain */
-    while (!g_quit) {
-        uint16_t pending = bus_wram_read16(0x0202) | bus_wram_read16(0x0204);
-        if ((pending & 0x00FF) == 0) break;
-        mp_01E2CE();
-    }
-    if (g_quit) return;
-
-    /* Determine which state variable to set based on address range */
-    /* DATA_01CEE4 = threshold for choosing $1966 vs $1964 */
-    uint16_t threshold = 0xCEE4;  /* DATA_01CEE4 address */
-    if (list_ptr >= threshold) {
-        bus_wram_write16(0x1966, list_ptr);
-    } else {
-        bus_wram_write16(0x1964, list_ptr);
-    }
-
-    /* Process DMA command groups.
-     * The command list is in bank $01 at the given pointer.
-     * Format: sequences of 9-byte DMA records ending with $00,
-     * followed by a continuation byte. $FF = end. */
-    uint16_t y = 0;
-
-    while (!g_quit) {
-        /* Copy one group of DMA records into the queue at $0182 */
-        uint16_t write_pos = bus_wram_read16(0x0204);
-        uint16_t end_pos = write_pos + 9;
-
-        /* Copy 9 bytes of DMA record */
-        for (uint16_t i = write_pos; i < end_pos; i++) {
-            uint8_t val = bus_read8(0x01, list_ptr + y);
-            bus_wram_write8(0x0182 + i, val);
-            y++;
-        }
-
-        /* Check for continuation records in same group */
-        while (true) {
-            uint8_t next = bus_read8(0x01, list_ptr + y);
-            bus_wram_write8(0x0182 + end_pos, next);
-            if (next == 0x00) break;  /* End of group */
-            y++;
-            end_pos++;
-        }
-
-        /* Mark DMA pending and sync frame */
-        bus_wram_write16(0x0202, 0x0001);
-        mp_01E2CE();
+    /* PHP; PHD; three words of locals; D = S: $01 end index, $03 list
+     * pointer (A), $05 its bank (1). */
+    uint8_t db = g_cpu.DB;
+    uint16_t list = CPU_A16();
+    uint16_t s0 = g_cpu.S, dp0 = g_cpu.DP;
+    uint8_t p0 = cpu_get_p();
+    bus_wram_write8(s0, p0);
+    bus_wram_write16((uint16_t)(s0 - 2), dp0);
+    uint16_t d = (uint16_t)(s0 - 9);
+    for (int i = 1; i <= 6; i += 2) bus_wram_write16((uint16_t)(d + i), list);
+    g_cpu.S = d; g_cpu.DP = d;
+    while ((bus_read16(db, 0x0202) | bus_read16(db, 0x0204)) & 0x00FF) {
+        call_jsl(0x01E2CE);
         if (g_quit) return;
-
-        /* Check continuation byte */
-        y++;
-        int8_t cont = (int8_t)bus_read8(0x01, list_ptr + y);
-        if (cont < 0) break;  /* $FF or $80+ = end */
     }
+    bus_write16(db, list >= 0xCEE4 ? 0x1966 : 0x1964, list);
+    bus_wram_write16((uint16_t)(d + 5), 0x0001);
+    g_cpu.flag_M = true; g_cpu.flag_X = true;            /* SEP #$30 */
+    uint8_t y = 0, x, end, a;
+#define LIST(yy) bus_read8(0x01, (uint16_t)(list + (uint8_t)(yy)))
+    do {
+        x = bus_read8(db, 0x0204);                       /* $CE11 */
+        end = (uint8_t)(x + 9);
+        for (;;) {
+            do {                                         /* $CE1A: one record */
+                bus_write8(db, (uint16_t)(0x0182 + x), LIST(y));
+                y++; x++;
+            } while (x != end);
+            a = LIST(y);                                 /* $CE25 */
+            bus_write8(db, (uint16_t)(0x0182 + x), a);
+            if (a == 0) break;
+            end = (uint8_t)(end + 9);
+            y++; x++;                                    /* $CE1F */
+            if (x == end) continue;
+        }
+        bus_wram_write8((uint16_t)(d + 1), end);
+        bus_write8(db, 0x0202, (uint8_t)(bus_read8(db, 0x0202) + 1));
+        g_cpu.X = x; g_cpu.Y = y;
+        call_jsl(0x01E2CE);
+        if (g_quit) return;
+        y++;
+        a = LIST(y);
+        CPU_SET_A8(a);
+    } while (!(a & 0x80));
+#undef LIST
+    g_cpu.flag_M = false;                                /* REP #$20; PLA x3; PLD; PLP */
+    g_cpu.X = x; g_cpu.Y = y;
+    g_cpu.DP = dp0;
+    g_cpu.S = s0;
+    cpu_set_p(p0);
 }
 
 /* ========================================================================

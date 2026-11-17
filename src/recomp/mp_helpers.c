@@ -349,61 +349,72 @@ void mp_00E25C(void) {
 }
 
 /* ========================================================================
- * $00:E64F — Canvas palette row initialization
- *
- * Complex routine that initializes the palette color data for each
- * canvas row. Reads color data from various sources depending on
- * tool state ($0EB8, $09D6, $04D0).
- *
- * Due to its complexity and many sub-routine calls, we implement
- * the outer loop and dispatch to helpers via func_table_call.
+ * $00:E64F — build the window/colour-math tables at $0F44-$0FA3 from the
+ * palette: entries X = 2..$0E and $42..$4C (two words per colour, Y
+ * runs alongside, $60 from X = $40 on). Each colour pair comes from $0EC4
+ * (with $0EB8), $1C2A (tool 3 or $09D6 = 2, with $A6 >= $70) or $1CAA,
+ * into $1004/$1006 and $100A/$100C; each byte column (1004-1006-1008,
+ * 1005-1007-1009, ...) is shifted right 4 bits as one 24-bit value. The
+ * first and last entries are fixed ($E706). Entries 2, 8, $0E, $44, $4A
+ * get other fill bits. Then the 10 DMA words at $00:E7C6 into the queue,
+ * one frame. DB-relative throughout, as the ROM.
  * ======================================================================== */
 void mp_00E64F(void) {
-    uint16_t x = 0x0000;
-    uint16_t y = 0x0000;
-
-    while (x < 0x0050) {  /* 80 entries / 2 bytes each ≈ up to $4E */
-        if (x == 0x0000 || x == 0x004E) {
-            /* Skip these indices — jump to end-of-row processing */
-            goto next_row;
-        }
-
-        /* Determine source for palette data based on game state */
-        uint16_t eb8 = bus_wram_read16(0x0EB8);
-        if (eb8 != 0) {
-            /* Alternate palette source from $0EC4 tables */
-            bus_wram_write16(0x1004, bus_wram_read16(0x0EC4 + x));
-            bus_wram_write16(0x1006, bus_wram_read16(0x0EE4 + x));
-            bus_wram_write16(0x100A, bus_wram_read16(0x0ED4 + x));
-            bus_wram_write16(0x100C, bus_wram_read16(0x0EF4 + x));
+    uint8_t p = cpu_get_p();
+    uint8_t db = g_cpu.DB;
+#define R16(o)    bus_read16(db, (uint16_t)(o))
+#define W16(o, v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+#define R8(o)     bus_read8(db, (uint16_t)(o))
+#define W8(o, v)  bus_write8(db, (uint16_t)(o), (uint8_t)(v))
+    uint16_t x = 0, y = 0;
+    for (;;) {
+        if (x == 0x0000 || x == 0x004E) {                   /* $E706 */
+            W16(0x1004, 0x000F); W16(0x1006, 0x00FF); W16(0x1008, 0x00F0);
+            W16(0x100A, 0x0F0F); W16(0x100C, 0xFFFF); W16(0x100E, 0xF0F0);
         } else {
-            uint16_t palette_row = bus_wram_read16(0x00A6);
-            if (palette_row >= 0x0070) {
-                /* High palette: read from $1C2A tables */
-                bus_wram_write16(0x1004, bus_wram_read16(0x1C2A + x));
-                bus_wram_write16(0x1006, bus_wram_read16(0x1C4A + x));
-                bus_wram_write16(0x100A, bus_wram_read16(0x1C3A + x));
-                bus_wram_write16(0x100C, bus_wram_read16(0x1C5A + x));
-            } else {
-                /* Standard: read from $1CAA tables */
-                bus_wram_write16(0x1004, bus_wram_read16(0x1CAA + x));
-                bus_wram_write16(0x1006, bus_wram_read16(0x1CCA + x));
-                bus_wram_write16(0x100A, bus_wram_read16(0x1CBA + x));
-                bus_wram_write16(0x100C, bus_wram_read16(0x1CDA + x));
+            uint16_t b1, b2, b3, b4;
+            if (R16(0x0EB8) != 0) { b1 = 0x0EC4; b2 = 0x0EE4; b3 = 0x0ED4; b4 = 0x0EF4; }
+            else {
+                bool hi = false;
+                if (R16(0x09D6) == 0x0002 || (R16(0x04D0) & 0x00FF) == 0x0003)
+                    hi = bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xA6)) >= 0x0070;
+                if (hi) { b1 = 0x1C2A; b2 = 0x1C4A; b3 = 0x1C3A; b4 = 0x1C5A; }
+                else    { b1 = 0x1CAA; b2 = 0x1CCA; b3 = 0x1CBA; b4 = 0x1CDA; }
+            }
+            W16(0x1004, R16(b1 + x)); W16(0x1006, R16(b2 + x));
+            W16(0x100A, R16(b3 + x)); W16(0x100C, R16(b4 + x));
+            W16(0x1008, 0); W16(0x100E, 0);
+            static const uint16_t col[4] = { 0x1004, 0x1005, 0x100A, 0x100B };
+            for (int c = 0; c < 4; c++) {                   /* LSR/ROR/ROR x4 */
+                uint32_t v = ((uint32_t)R8(col[c]) << 16) | ((uint32_t)R8(col[c] + 2) << 8) | R8(col[c] + 4);
+                v >>= 4;
+                W8(col[c], v >> 16); W8(col[c] + 2, v >> 8); W8(col[c] + 4, v);
             }
         }
-
-        /* Clear intermediate values */
-        bus_wram_write16(0x1008, 0x0000);
-        bus_wram_write16(0x100E, 0x0000);
-
-        /* Process the color data — calls sub-routines for
-         * bit manipulation and palette computation */
-        func_table_call(0x00E6DA);
-
-next_row:
-        x += 2;
+        bool edge = x == 0x0002 || x == 0x0008 || x == 0x000E || x == 0x0044 || x == 0x004A;
+        W16(0x0F44 + y, R16(0x1004) | (edge ? 0x80D0 : 0x80F0));
+        W16(0x0F64 + y, R16(0x1006));
+        W16(0x0F84 + y, R16(0x1008) | (edge ? 0x010B : 0x010F));
+        W16(0x0F54 + y, R16(0x100A) | 0xF0F0);
+        W16(0x0F74 + y, R16(0x100C));
+        W16(0x0F94 + y, R16(0x100E) | 0x0F0F);
+        y = (uint16_t)(y + 2);
+        x = (uint16_t)(x + 2);
+        if (x == 0x0050) break;
+        if (x == 0x0010) { x = 0x0040; y = 0x0060; }
     }
+    W16(0x0202, 0);
+    x = R16(0x0204);
+    for (y = 0; y != 0x0014; y = (uint16_t)(y + 2), x = (uint16_t)(x + 2)) W16(0x0182 + x, R16(0xE7C6 + y));
+    W16(0x0202, R16(0x0202) + 1);
+    g_cpu.X = x; g_cpu.Y = y;
+    call_jsl(0x01E2CE);
+    cpu_set_p(p);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+#undef R16
+#undef W16
+#undef R8
+#undef W8
 }
 
 /* ========================================================================
@@ -429,89 +440,75 @@ void mp_00F39E(void) {
 }
 
 /* ========================================================================
- * $01:8F52 — Title screen to canvas display transition
+ * $01:8F52 — The canvas opening: the iris in
  *
- * Sets up the canvas display after the title screen:
- * fills BG1 tilemap with $24E0, queues DMA, sets up toolbar
- * sprite slot, enables brightness, and runs the toolbar
- * scroll-in animation.
+ * Tilemap $7E:2000 cleared, the title sprites, the screen on, then an
+ * expanding circle window ($01:904A into the HDMA table pair, swapped
+ * each frame) from radius 1 to $47; a click jumps ahead. Then idle until
+ * a click or $05A9, and the circle shrinks back from $47 while the
+ * brightness fades with it (radius/4, capped at $0F; $80 = blank at 0).
+ * The save-wipe check ($934F) runs on the way.
  * ======================================================================== */
 void mp_018F52(void) {
-    /* Fill BG1 tilemap with $24E0 (blank canvas tile) */
-    uint8_t *wram = bus_get_wram();
-    for (int x = 0x07FE; x >= 0; x -= 2) {
-        wram[0x2000 + x]     = 0xE0;
-        wram[0x2000 + x + 1] = 0x24;
-    }
-
-    /* Queue tilemap DMA and sync */
-    mp_01DE97();
-    mp_01E2CE();
-    if (g_quit) return;
-
-    /* Initialize toolbar sprite slot $28 */
-    op_lda_imm16(0x0028);
-    mp_019DFE();
-
-    /* Animate toolbar sprite */
-    op_lda_imm16(0x0028);
-    func_table_call(0x01962C);
-
-    /* Enable display (brightness = $0F, no force blank) */
-    op_sep(0x20);
-    bus_wram_write8(0x0104, 0x0F);
-    op_rep(0x20);
-
-    mp_01E2CE();
-    if (g_quit) return;
-
-    /* Set up canvas data transfer flag */
-    bus_wram_write16(0x0211, 0x0001);
-
-    /* Enable BG window masking */
-    op_sep(0x20);
-    bus_wram_write8(0x0111, 0x02);
-    op_rep(0x20);
-
-    /* Run toolbar scroll-in animation */
-    for (int x = 0x0047; x > 0 && !g_quit; x--) {
-        /* Set up animation params and call sub-routines */
-        func_table_call(0x01904A);
-
-        uint16_t hdma_flag = bus_wram_read16(0x0211);
-        hdma_flag ^= 0x0003;
-        bus_wram_write16(0x0211, hdma_flag);
-        bus_wram_write16(0x0220, hdma_flag);
-
-        mp_01E2CE();
+#define R16(o)    bus_read16(g_cpu.DB, (uint16_t)(o))
+#define W16(o, v) bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+    for (int x = 0x07FE; x >= 0; x -= 2) bus_write16(0x7E, (uint16_t)(0x2000 + x), 0x24E0);
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    CPU_SET_A16(0x0028); call_jsl(0x019DFE);
+    CPU_SET_A16(0x0028); call_jsl(0x01962C);
+    bus_write8(0x00, 0x0104, 0x0F);
+    call_jsl(0x01E2CE);
+    W16(0x0211, 0x0001);
+    bus_write8(0x00, 0x0111, 0x02);
+    uint16_t x = 0x0047;
+    bool skip = false;
+    for (;;) {                                           /* $8F97: opening */
+        push_a16(x);
+        push_a16(0x0080); push_a16(0x0070);
+        push_a16((uint16_t)(0x0048 - x));
+        W16(0x0211, R16(0x0211) ^ 0x0003);
+        call_jsr(0x01904A);
+        bus_write16(0x00, 0x0220, R16(0x0211));
+        call_jsl(0x01E2CE);
+        x = bus_wram_read16((uint16_t)(g_cpu.S + 1)); g_cpu.S = (uint16_t)(g_cpu.S + 2);
+        g_cpu.X = x;
+        call_jsr(0x01934F);
+        if (bus_read16(0x00, 0x04CA) & 0x0020) { x = (uint16_t)(0x0048 - x); skip = true; break; }
+        if (--x == 0) break;
         if (g_quit) return;
-
-        func_table_call(0x01934F);
-
-        /* Check for early exit on mouse click */
-        uint8_t buttons = bus_wram_read8(0x04CA);
-        if (buttons & 0x20) {
-            /* Fast-forward animation */
-            break;
+    }
+    if (!skip) {
+        for (;;) {                                       /* $8FDB: wait */
+            call_jsl(0x01E06F);
+            CPU_SET_A16(0x0028); call_jsl(0x01962C);
+            call_jsl(0x01E2CE);
+            call_jsr(0x01934F);
+            if (bus_read16(0x00, 0x04CA) & 0x0020) break;
+            if (bus_read16(0x00, 0x05A9) & 0x00FF) break;
+            if (g_quit) return;
         }
+        x = 0x0048;
     }
-
-    /* Final animation settle loop */
-    while (!g_quit) {
-        mp_01E06F();
-        op_lda_imm16(0x0028);
-        func_table_call(0x01962C);
-        mp_01E2CE();
+    do {                                                 /* $9002: closing */
+        push_a16(x);
+        push_a16(0x0080); push_a16(0x0070);
+        push_a16((uint16_t)(x - 1));
+        W16(0x0211, R16(0x0211) ^ 0x0003);
+        call_jsr(0x01904A);
+        bus_write16(0x00, 0x0220, R16(0x0211));
+        uint16_t b = (uint16_t)((bus_wram_read16((uint16_t)(g_cpu.S + 1)) - 1) >> 2);
+        if (b == 0) b = 0x0080; else if (b >= 0x000F) b = 0x000F;
+        bus_write8(0x00, 0x0104, (uint8_t)b);
+        call_jsl(0x01E2CE);
+        x = bus_wram_read16((uint16_t)(g_cpu.S + 1)); g_cpu.S = (uint16_t)(g_cpu.S + 2);
+        x--;
+        g_cpu.X = x;
         if (g_quit) return;
-
-        func_table_call(0x01934F);
-
-        uint8_t buttons = bus_wram_read8(0x04CA);
-        if (buttons & 0x20) break;
-
-        uint8_t flag = bus_wram_read8(0x05A9);
-        if (flag != 0) break;
-    }
+    } while (x != 0);
+    call_jsl(0x01E06F);
+#undef R16
+#undef W16
 }
 
 /* ========================================================================
@@ -596,7 +593,11 @@ void mp_01E298(void) {
     CPU_SET_A16(0x006C);
 }
 
+/* $00:E64B (JSL): the window tables ($E64F) for long callers. */
+void mp_00E64B(void) { call_jsr(0x00E64F); }
+
 void mp_register_helpers(void) {
+    func_table_register(0x00E64B, mp_00E64B);
     func_table_register(0x01E298, mp_01E298);
     func_table_register(0x00A451, mp_00A451);
     func_table_register(0x00A44D, mp_00A44D);

@@ -188,59 +188,55 @@ place_stamp:
  * waits for VRAM transfer, then resets tool state.
  * ======================================================================== */
 void mp_009760(void) {
-    op_lda_imm16(0x0009);
-    func_table_call(0x01D368);
-
-    /* Look up tool-specific undo behavior */
-    uint8_t tool = bus_wram_read8(0x00AA);
-    uint8_t undo_mode = bus_read8(0x00, 0x9843 + tool);
-
-    /* Push args for tool change */
-    op_pha16(); bus_wram_write16(g_cpu.S + 1, (uint16_t)undo_mode);
-    op_pha16(); bus_wram_write16(g_cpu.S + 1, (uint16_t)tool);
-    op_lda_imm16(0x0001);
-    op_pha16(); bus_wram_write16(g_cpu.S + 1, 0x0001);
-    mp_009FC4();
-    g_cpu.S += 6;
-
-    /* Clear VRAM transfer and restore canvas */
-    bus_wram_write16(0x0206, 0x0000);
-    mp_008B18();  /* Restore from undo buffer */
-
-    /* Wait for VRAM transfer */
-    bus_wram_write16(0x0208, 0x0000);
-    bus_wram_write16(0x0206, bus_wram_read16(0x0206) + 1);
-
-    while (!g_quit) {
-        mp_01E2CE();
-        if (bus_wram_read16(0x0208) != 0) break;
+    /* $00:9760: undo. Sound 9; switch to the tool's undo variant ($9843);
+     * restore the canvas from the undo buffer ($8B18) and wait until the
+     * upload is done ($0208); then switch back to the tool with what it
+     * needs (the tool in use, the brush, the custom colour, the stamp
+     * page...), or with nothing. */
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+#define R16(o)  bus_read16(db, (uint16_t)(o))
+    CPU_SET_A16(0x0009); call_jsl(0x01D368);
+    uint16_t aa = bus_read16(0x00, (uint16_t)(dp + 0xAA));
+    uint16_t w = bus_read16(db, (uint16_t)(0x9843 + aa)) & 0x00FF;
+    call_tool_switch(aa, 1, &w);
+    bus_write16(db, 0x0206, 0);
+    call_jsr(0x008B18);
+    bus_write16(db, 0x0208, 0);
+    bus_write16(db, 0x0206, R16(0x0206) + 1);
+    do call_jsl(0x01E2CE); while (R16(0x0208) != 0);         /* $9784: LDA $0208; BNE */
+    aa = bus_read16(0x00, (uint16_t)(dp + 0xAA));
+    uint16_t v;
+    switch (aa) {
+    case 0x0000: v = R16(0x04D0) & 0x00FF; break;
+    case 0x0001: v = R16(0x1988); break;
+    case 0x0003: {
+        uint16_t t = R16(0x04D0) & 0x00FF;
+        if (t == 0x0006) goto none;
+        v = t == 0x0007 ? 0x0006 : t;
+        break;
     }
-
-    /* Tool-specific post-undo handling */
-    uint16_t aa = bus_wram_read16(0x00AA);
-    if (aa == 0) goto done;
-    if (aa == 1) goto clear_and_restore;
-    if (aa == 3) goto clear_and_restore;
-    if (aa == 4) goto set_and_restore;
-    if (aa == 8) goto special_restore;
-    if (aa == 0x0F) goto song_restore;
-
-    /* Default: restore tool and exit */
-    op_pha16(); bus_wram_write16(g_cpu.S + 1, aa);
-    op_lda_imm16(0x0000);
-    op_pha16(); bus_wram_write16(g_cpu.S + 1, 0x0000);
-    mp_009FC4();
-    g_cpu.S += 4;
-
-done:
+    case 0x0004:
+        if ((R16(0x04D0) & 0x00FF) != 0x0006) goto none;
+        v = R16(0x19C0);
+        break;
+    case 0x0008: {
+        uint16_t ws[3];
+        if (R16(0x1992) != 0) { ws[0] = 0x0008; ws[1] = R16(0x0EBA); call_tool_switch(aa, 2, ws); return; }
+        call_jsr(0x00EB3B);
+        uint16_t c = CPU_A16();
+        if (R16(0x0EB8) & 0x8000) { ws[0] = c; ws[1] = 0x0007; ws[2] = R16(0x0EBA); call_tool_switch(aa, 3, ws); }
+        else { ws[0] = c; ws[1] = R16(0x0EBA); call_tool_switch(aa, 2, ws); }
+        return;
+    }
+    case 0x000F: v = R16(0x0997); break;
+    default: goto none;
+    }
+    call_tool_switch(aa, 1, &v);                            /* $9837 */
     return;
-
-clear_and_restore:
-set_and_restore:
-special_restore:
-song_restore:
-    /* Various tool-specific cleanup — not yet fully recompiled */
-    return;
+none:
+    call_tool_switch(aa, 0, 0);                             /* $97AD */
+#undef R16
 }
 
 /* ========================================================================
@@ -310,28 +306,25 @@ void mp_0082A7(void) {
  * Title screen / canvas transition helpers
  * ======================================================================== */
 
-/* $01:904A — Title screen animation frame helper */
-void mp_01904A(void) {
-    /* Complex animation setup for toolbar scroll-in.
-     * Reads animation parameters from stack, sets up HDMA tables. */
-    /* For now, registered to prevent no-op */
-}
-
 /* $01:934F — Title screen frame processing */
+/* $01:934F — the save wipe: with buttons $A0A0 newly pressed on pad 2
+ * ($013C) while exactly $A0A0 is held ($0134), clear SRAM $70:0000-$7FFF.
+ * X is kept. */
 void mp_01934F(void) {
-    /* Processes one animation frame during title-to-canvas transition.
-     * Updates sprite animation, checks for input. */
-    mp_01E06F();
-    op_lda_imm16(0x0028);
-    func_table_call(0x01962C);
+    uint16_t x = g_cpu.X;
+    uint16_t a = bus_wram_read16(0x013C);
+    CPU_SET_A16(a);
+    if (a & 0xA0A0) {
+        a = bus_wram_read16(0x0134);
+        CPU_SET_A16(a);
+        if (a == 0xA0A0) {
+            for (int i = 0x7FFE; i >= 0; i -= 2) bus_write16(0x70, (uint16_t)i, 0x0000);
+            CPU_SET_A16(0x0000);
+        }
+    }
+    g_cpu.X = x;
 }
 
-/* $01:9372 — Jump to special mode (from title screen) */
-void mp_019372(void) {
-    /* Dispatches to a special game mode after title screen.
-     * Used when $0565 != 0 (P2 combo detected). */
-    /* Special mode not yet recompiled — return to normal flow */
-}
 
 /* ========================================================================
  * Register all miscellaneous functions.
@@ -796,7 +789,161 @@ void mp_00D52C(void) {
     CPU_SET_A16(ptr);
 }
 
+/* $00:C6C6: A rounds of: sprite/OAM refresh ($8B48, $9378), $0446 = 4,
+ * the objects $22 down to $1B ($01:F84F with the number on the stack),
+ * the colour fade step ($01:E09B) and a frame. */
+void mp_00C6C6(void) {
+    uint16_t n = CPU_A16();
+    do {
+        push_a16(n);
+        CPU_SET_A16(n);
+        call_jsr(0x008B48);
+        call_jsr(0x009378);
+        bus_write16(g_cpu.DB, 0x0446, 0x0004);
+        for (uint16_t i = 0x0022; ; i--) {
+            push_a16(i);
+            CPU_SET_A16(i);
+            call_jsl(0x01F84F);
+            g_cpu.S = (uint16_t)(g_cpu.S + 2);
+            CPU_SET_A16((uint16_t)(i - 1));
+            if ((int16_t)(uint16_t)(i - 1 - 0x001B) < 0) break;
+        }
+        call_jsl(0x01E09B);
+        call_jsl(0x01E2CE);
+        n = bus_wram_read16((uint16_t)(g_cpu.S + 1));
+        g_cpu.S = (uint16_t)(g_cpu.S + 2);
+        n--;
+        CPU_SET_A16(n);
+    } while (n != 0);
+}
+
+/* $00:C873: with $19FA, the page $19C2's row of tiles into the buffer at
+ * $0326 (tile, then $30B1 + index), its two object masks into $0436/$0438
+ * and the $78 timer in $0545. Tables at $C8C2/$C8C8/$C8F4 (through DB). */
+void mp_00C873(void) {
+    uint8_t db = g_cpu.DB;
+    if (bus_read16(db, 0x19FA) == 0) return;
+    uint16_t pg = bus_read16(db, 0x19C2);
+    uint16_t y = bus_read16(db, (uint16_t)(0xC8C2 + pg * 2));
+    uint16_t src = (uint16_t)(bus_read16(db, (uint16_t)(0xC8C8 + pg * 2)) + 0xC8CE);
+    for (uint16_t x = 0; ; x = (uint16_t)(x + 4)) {
+        bus_write16(db, (uint16_t)(0x0326 + x), bus_read16(db, (uint16_t)(src + y)));
+        bus_write16(db, (uint16_t)(0x0328 + x), (uint16_t)((y >> 1) + 0x30B1));
+        y = (uint16_t)(y - 2);
+        if (y & 0x8000) break;
+    }
+    bus_write16(db, 0x0436, bus_read16(db, (uint16_t)(0xC8F4 + pg * 4)) & bus_read16(db, 0x0436));
+    bus_write16(db, 0x0438, bus_read16(db, (uint16_t)(0xC8F6 + pg * 4)) & bus_read16(db, 0x0438));
+    bus_write16(db, 0x0545, 0x0078);
+}
+
+/* $00:BA69: the two sprite scripts $CEB2 and $CF16 ($01:CDE1). */
+void mp_00BA69(void) {
+    CPU_SET_A16(0xCEB2); call_jsl(0x01CDE1);
+    CPU_SET_A16(0xCF16); call_jsl(0x01CDE1);
+}
+
+/* $00:8994 (JSL): back to the canvas: $87EE, the tool switch to the plain
+ * canvas (tool 7, no words), $09AB with the stamp tool, palette record. */
+void mp_008994(void) {
+    call_jsr(0x0087EE);
+    call_tool_switch(0x0007, 0, 0);
+    if (bus_read16(g_cpu.DB, 0x04D0) == 0x0006)
+        bus_write16(g_cpu.DB, 0x09AB, (uint16_t)(bus_read16(g_cpu.DB, 0x09AB) + 1));
+    call_jsr(0x00A363);
+}
+
+/* $00:C490: copy a block of tile words into WRAM, skipping the $01FF
+ * holes. Stack arguments (pushed by the caller, removed here like the ROM
+ * does by moving the return address): rows (low 5 bits, x $40 bytes),
+ * source in bank $02, destination in bank $7E. */
+void mp_00C490(void) {
+    uint16_t s0 = g_cpu.S, dp0 = g_cpu.DP;
+    uint16_t d = (uint16_t)(s0 - 0x12);
+    bus_wram_write16((uint16_t)(s0 - 1), dp0);              /* PHD; TSC; SBC #$10; TCS; TCD */
+    g_cpu.S = d; g_cpu.DP = d;
+    uint16_t bytes = (uint16_t)((bus_wram_read16((uint16_t)(s0 + 3)) & 0x001F) << 6);
+    bus_wram_write16((uint16_t)(s0 + 3), bytes);
+    uint16_t src = bus_wram_read16((uint16_t)(s0 + 5));
+    uint16_t dst = bus_wram_read16((uint16_t)(s0 + 7));
+    bus_wram_write16((uint16_t)(d + 1), src);
+    bus_wram_write16((uint16_t)(d + 3), 0x0002);
+    bus_wram_write16((uint16_t)(d + 5), dst);
+    bus_wram_write16((uint16_t)(d + 7), 0x007E);
+    uint16_t y = 0, a;
+    do {
+        uint32_t sa = 0x020000u + src + y, da = 0x7E0000u + dst + y;
+        a = bus_read16((uint8_t)(sa >> 16), (uint16_t)sa);
+        if (a != 0x01FF) bus_write16((uint8_t)(da >> 16), (uint16_t)da, a);
+        y = (uint16_t)(y + 2);
+    } while (y != bytes);
+    g_cpu.DP = dp0;                                         /* PLD; PLY; S += 6; PHY */
+    uint16_t ret = bus_wram_read16((uint16_t)(s0 + 1));
+    bus_wram_write16((uint16_t)(s0 + 7), ret);
+    g_cpu.S = (uint16_t)(s0 + 6);
+    g_cpu.Y = ret;
+    CPU_SET_A16((uint16_t)(s0 + 8));
+}
+
+/* $01:904A: a circle (midpoint method, eight octants) with stack
+ * arguments radius, centre Y, centre X (pushed in that reverse order; the
+ * radius slot is the running error term). The points go through $01:916E
+ * (right half) and $01:9130 (left half); the X/Y offsets are squashed by
+ * 3/16 for the screen's pixel aspect. Removes its arguments by moving the
+ * return address, like the ROM. */
+void mp_01904A(void) {
+    uint16_t s0 = g_cpu.S;
+#define ARG(o)     bus_wram_read16((uint16_t)(s0 + (o)))
+#define SETARG(o,v) bus_wram_write16((uint16_t)(s0 + (o)), (uint16_t)(v))
+    call_jsr(0x0191AC);
+    uint16_t y = ARG(3), x = 0, cy = ARG(5), cx = ARG(7);
+    uint16_t l = s0 - 8;                                   /* locals $01..$08,s */
+    bus_wram_write16((uint16_t)(l + 7), y);
+    bus_wram_write16((uint16_t)(l + 5), 0);
+    bus_wram_write16((uint16_t)(l + 3), 0);
+    bus_wram_write16((uint16_t)(l + 1), 0);
+    g_cpu.S = l;
+    while (y >= x) {
+        uint16_t sy = (uint16_t)(y - (uint16_t)(((uint16_t)(y * 3)) >> 4));
+        uint16_t sx = (uint16_t)(x - (uint16_t)(((uint16_t)(x * 3)) >> 4));
+        bus_wram_write16((uint16_t)(l + 3), sy);
+        bus_wram_write16((uint16_t)(l + 1), sx);
+        const struct { int dxs; uint16_t dx; int dys; uint16_t dy; uint32_t f; } p[8] = {
+            { +1, sy, +1, x, 0x01916E }, { +1, sy, -1, x, 0x01916E },
+            { -1, sy, +1, x, 0x019130 }, { -1, sy, -1, x, 0x019130 },
+            { +1, sx, +1, y, 0x01916E }, { +1, sx, -1, y, 0x01916E },
+            { -1, sx, +1, y, 0x019130 }, { -1, sx, -1, y, 0x019130 },
+        };
+        for (int i = 0; i < 8; i++) {
+            g_cpu.X = (uint16_t)(p[i].dxs > 0 ? cx + p[i].dx : cx - p[i].dx);
+            g_cpu.Y = (uint16_t)(p[i].dys > 0 ? cy + p[i].dy : cy - p[i].dy);
+            CPU_SET_A16(g_cpu.Y);
+            call_jsr(p[i].f);
+        }
+        uint16_t d = (uint16_t)(ARG(3) - (uint16_t)((x << 1) - 1));
+        x = (uint16_t)(x + 1);
+        bus_wram_write16((uint16_t)(l + 5), x);
+        SETARG(3, d);
+        if (d & 0x8000) {
+            y = (uint16_t)(y - 1);
+            bus_wram_write16((uint16_t)(l + 7), y);
+            SETARG(3, (uint16_t)(d + (uint16_t)(y << 1)));
+        }
+    }
+    SETARG(7, ARG(1));                                     /* return address over centre X */
+    g_cpu.S = (uint16_t)(s0 + 6);
+    CPU_SET_A16(g_cpu.S);
+#undef ARG
+#undef SETARG
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00C490, mp_00C490);
+    func_table_register(0x008994, mp_008994);
+    func_table_register(0x00C6C6, mp_00C6C6);
+    func_table_register(0x00C873, mp_00C873);
+    func_table_register(0x00BA69, mp_00BA69);
+
     func_table_register(0x00D590, mp_00D590);
     func_table_register(0x00D842, mp_00D842);
     func_table_register(0x00D73C, mp_00D73C);
@@ -825,5 +972,4 @@ void mp_register_misc(void) {
     func_table_register(0x0082A7, mp_0082A7);
     func_table_register(0x01904A, mp_01904A);
     func_table_register(0x01934F, mp_01934F);
-    func_table_register(0x019372, mp_019372);
 }
