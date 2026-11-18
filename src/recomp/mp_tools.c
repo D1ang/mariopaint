@@ -128,27 +128,20 @@ void mp_0096E1(void) {
  * updates $04D0 with the new tool ID, refreshes pen graphics.
  * ======================================================================== */
 void mp_009853(void) {
-    /* Sound effect */
-    op_lda_imm16(0x0004);
-    func_table_call(0x01D368);
-
-    /* Get the toolbar slot that was clicked */
-    uint16_t slot = bus_wram_read16(0x00A8) & 0xFF;
-    uint16_t a8_hi = slot << 8;
-
-    /* Save previous tool for stamp mode */
-    uint16_t cur_tool = bus_wram_read16(0x04D0);
-    if ((cur_tool & 0xFF) == 0x07) {
-        cur_tool = bus_wram_read16(0x1B10);
-    }
-
-    /* Set new tool mode */
-    uint16_t new_d0 = (cur_tool & 0xFF) | a8_hi;
-    bus_wram_write16(0x04D0, new_d0);
-
-    /* Update pen graphics and palette display */
-    mp_0096E1();
-    mp_00E64F();
+    /* $00:9853: a pencil-size button: the size from the clicked slot (DP $A8
+     * low byte) into the high byte of $04D0 and of $A8, the tool kept (the
+     * stamp editor's previous tool $1B10 when the whole $04D0 is 7), the
+     * tool's palette ($96E1) and the window tables ($E64F). */
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+    CPU_SET_A16(0x0004); call_jsl(0x01D368);
+    uint16_t a8 = (uint16_t)((bus_read16(0x00, (uint16_t)(dp + 0xA8)) & 0x00FF) << 8);
+    bus_write16(0x00, (uint16_t)(dp + 0xA8), a8);
+    uint16_t t = bus_read16(db, 0x04D0);
+    if (t == 0x0007) t = bus_read16(db, 0x1B10);
+    bus_write16(db, 0x04D0, (uint16_t)((t & 0x00FF) | a8));
+    call_jsr(0x0096E1);
+    tail_jmp(0x00E64F);
 }
 
 /* ========================================================================

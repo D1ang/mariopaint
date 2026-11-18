@@ -619,25 +619,80 @@ void mp_00B610(void) {
     bus_write8(0x7F, offset, bus_read8(0x7F, offset) | (1 << (7 - x_bit)));
 }
 
-/* ========================================================================
- * $00:B7D6 — Spray can effect
- *
- * Applies random spray pattern to the drawing.
- * ======================================================================== */
+/* $00:B910 / $00:B926 (A 8-bit): sine and cosine of the angle A (0..$FF
+ * a full turn) from the quarter-wave table at $00:B947; the value is the
+ * magnitude, $0102 is set when it is negative. X is kept. */
+static uint8_t quarter_wave(uint8_t i) { return bus_read8(0x00, (uint16_t)(0xB947 + (i & 0x7F))); }
+void mp_00B910(void) {
+    uint8_t a = CPU_A8();
+    bus_write8(g_cpu.DB, 0x0102, a >= 0x80 ? 1 : 0);
+    if (a & 0x40) a = (uint8_t)-a;
+    CPU_SET_A8(quarter_wave(a));
+}
+void mp_00B926(void) {
+    uint8_t a = CPU_A8();
+    bus_write8(g_cpu.DB, 0x0102, (a >= 0x40 && a < 0xC0) ? 1 : 0);
+    if (!(a & 0x40)) a = (uint8_t)-a;
+    a ^= 0x40;
+    CPU_SET_A8(quarter_wave(a));
+}
+
+/* $00:B7D6: the spray can's dot pattern, every other frame (or at once
+ * while the mouse moves or $50 is set): the 8x8-tile buffer $1C2A..$1CA9
+ * cleared, then rings 1..7 of dots at random angles. The dot count per
+ * ring comes from one of three tables (\$B8E0, or for the first $10 calls
+ * $B8F0 / $B900 by turn), the radius from the ring number, the offset from
+ * the hardware multiplier ($4202 x $4203). */
 void mp_00B7D6(void) {
-    /* Randomize the draw position slightly for spray effect */
-    mp_01E20C();
-    uint16_t rng = CPU_A16();
-
-    int16_t x_off = (int8_t)(rng & 0xFF);
-    int16_t y_off = (int8_t)(rng >> 8);
-
-    /* Clamp offsets */
-    x_off = (x_off % 8) - 4;
-    y_off = (y_off % 8) - 4;
-
-    bus_wram_write16(0x0086, bus_wram_read16(0x0086) + x_off);
-    bus_wram_write16(0x0088, bus_wram_read16(0x0088) + y_off);
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+#define DR(o)    bus_read16(0x00, (uint16_t)(dp + (o)))
+#define DW(o, v) bus_write16(0x00, (uint16_t)(dp + (o)), (uint16_t)(v))
+#define R16(o)   bus_read16(db, (uint16_t)(o))
+#define W16(o,v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+    DW(0xBA, DR(0xBA) - 1);
+    if (DR(0xBA) != 0 && (((R16(0x04C6) | R16(0x04C8)) & 0x00FF) | DR(0x50)) == 0) return;
+    DW(0xBA, 0x0002);
+    for (int x = 0x001E; x >= 0; x -= 2) {
+        W16(0x1C2A + x, 0); W16(0x1C4A + x, 0); W16(0x1C6A + x, 0); W16(0x1C8A + x, 0);
+    }
+    for (uint16_t ring = 1; ring != 8; ring++) {
+        uint16_t bc = DR(0xBC);
+        DW(0xBC, (uint16_t)(bc + 1));
+        if ((uint16_t)(bc + 1) == 0) DW(0xBE, 0x0001);
+        uint16_t table = 0xB8E0;
+        if (DR(0xBE) == 0 && bc < 0x0010) table = (bc & 1) ? 0xB900 : 0xB8F0;
+        uint16_t dots = R16((uint16_t)(table + ((ring - 1) << 1)));
+        while ((int16_t)(--dots) >= 0) {
+            call_jsl(0x01E20C);
+            uint8_t angle = (uint8_t)CPU_A16();
+            uint16_t off[2];
+            for (int k = 0; k < 2; k++) {                  /* $B2: cosine, $B4: sine */
+                g_cpu.flag_M = true; g_cpu.flag_X = true;
+                CPU_SET_A8(angle);
+                call_jsr(k == 0 ? 0x00B926 : 0x00B910);
+                bus_write8(db, 0x4202, CPU_A8());
+                bus_write8(db, 0x4203, (uint8_t)ring);
+                g_cpu.flag_M = false; g_cpu.flag_X = false;
+                uint16_t p = bus_read16(db, 0x4216);
+                if (bus_read8(db, 0x0102)) p = (uint16_t)-p;
+                off[k] = (uint16_t)((int16_t)(int8_t)(p >> 8) + 8);
+            }
+            DW(0xB2, off[0]);
+            DW(0xB4, off[1]);
+            uint16_t b6 = (uint16_t)(((off[0] & 0xFFF8) << 2) + ((off[1] & 0xFFF8) << 3) + ((off[1] & 7) << 1));
+            DW(0xB6, b6);
+            uint16_t bits = R16((uint16_t)(0xB600 + ((off[0] & 7) << 1)));
+            if (b6 >= 0x0070) { while (!g_quit) call_jsl(0x01E2CE); return; }   /* the ROM hangs (BRA *) */
+            W16(0x1C2A + b6, bits | R16(0x1C2A + b6));
+            W16(0x1C3A + b6, bits | R16(0x1C3A + b6));
+        }
+    }
+    g_cpu.Y = 0x0008;
+#undef DR
+#undef DW
+#undef R16
+#undef W16
 }
 
 /* ========================================================================
@@ -749,6 +804,8 @@ void mp_register_shapes(void) {
     func_table_register(0x00B32D, mp_00B32D);
     func_table_register(0x00B610, mp_00B610);
     func_table_register(0x00B7D6, mp_00B7D6);
+    func_table_register(0x00B910, mp_00B910);
+    func_table_register(0x00B926, mp_00B926);
     func_table_register(0x009C1B, mp_009C1B);
     func_table_register(0x009F50, mp_009F50);
     func_table_register(0x00A0EB, mp_00A0EB);
