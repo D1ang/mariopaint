@@ -1505,7 +1505,223 @@ void mp_01EC4B(void) {
     g_cpu.S = s0; g_cpu.DP = dp0; g_cpu.DB = db0;
 }
 
+/* $01:F03A (JSL, length argument on the stack): Huffman-encode the save.
+ * The data ($7F:2000, length in the argument slot) is moved up to end at
+ * $7F:E000; byte counts at $7F:0000, then the tree is built at $7F:0200
+ * (node pairs) with weights at $7F:0A04 by repeatedly joining the two
+ * lightest free nodes ($F018); each byte's code (length $1408, bits $1409,
+ * through $1208) is found by walking up to the root, and the codes are
+ * packed by ROL into $7F:2800 on. The tree goes to $7F:2000 for $F21D.
+ * Returns A = 0 and the packed length, or A = $FFFF when the output runs
+ * into the input. $EFB9 counts progress. */
+static uint16_t f03a_rol(uint16_t addr, bool *c) {
+    uint16_t w = bus_read16(0x7F, addr);
+    bool out = (w & 0x8000) != 0;
+    w = (uint16_t)((w << 1) | (*c ? 1 : 0));
+    bus_write16(0x7F, addr, w);
+    *c = out;
+    return w;
+}
+void mp_01F03A(void) {
+    uint8_t db0 = g_cpu.DB;
+    uint16_t dp0 = g_cpu.DP, s0 = g_cpu.S;
+    bus_wram_write8(s0, db0);
+    bus_wram_write16((uint16_t)(s0 - 2), dp0);
+    bus_wram_write16((uint16_t)(s0 - 1), 0x7F7F);           /* PEA $7F7F; PLB; PLB */
+    bus_wram_write16((uint16_t)(s0 - 2), dp0);
+    g_cpu.DB = 0x7F;
+    uint16_t d = (uint16_t)(s0 - 3 - 0x10);
+    g_cpu.S = d; g_cpu.DP = d;
+#define LW(o, v) bus_write16(0x00, (uint16_t)(d + (o)), (uint16_t)(v))
+#define LR(o)    bus_read16(0x00, (uint16_t)(d + (o)))
+#define K(o)     bus_read16(0x7F, (uint16_t)(o))
+#define KW(o, v) bus_write16(0x7F, (uint16_t)(o), (uint16_t)(v))
+#define PROGRESS(xx, yy) do { g_cpu.X = (uint16_t)(xx); g_cpu.Y = (uint16_t)(yy); call_jsr(0x01EFB9); } while (0)
+    uint16_t x = (uint16_t)((LR(0x17) + 1) & 0xFFFE), y = 0xE000;
+    do {
+        KW((uint16_t)(0x1FFE + y), K((uint16_t)(0x1FFE + x)));
+        y = (uint16_t)(y - 2); x = (uint16_t)(x - 2);
+    } while (x != 0);
+    LW(0x01, y);
+    for (int i = 0x0200; i >= 0; i -= 2) KW(i, 0);
+    x = 0xFFFE;
+    y = LR(0x01);
+    do {                                                     /* byte counts */
+        PROGRESS(x, y);
+        x = (uint16_t)(bus_read8(0x7F, (uint16_t)(0x1FFF + y)) << 1);
+        KW(x, K(x) + 1);
+        y++;
+    } while (y != 0xE000);
+    x = 0x0004; y = 0;
+    do {                                                     /* 256 leaves */
+        KW(0x0200 + x, 0); KW(0x0A04 + x, 0);
+        x += 2;
+        KW(0x0200 + x, y); KW(0x0A04 + x, K((uint16_t)(y << 1)));
+        y++; x += 2;
+    } while (y != 0x0100);
+    do {
+        KW(0x0200 + x, 0); KW(0x0A04 + x, 0); x += 2;
+        KW(0x0200 + x, 0); KW(0x0A04 + x, 0); x += 2;
+    } while (x != 0x0800);
+    KW(0x1C0E, 0x0404);
+    for (;;) {                                               /* join the two lightest */
+        PROGRESS(x, y);
+        call_jsr(0x01F018);
+        x = K(0x1C08);
+        KW(0x0A04 + x, 1);
+        uint16_t a = x;
+        x = K(0x1C0E);
+        KW(0x0200 + x, a);
+        KW(0x0A06 + x, g_cpu.Y);
+        call_jsr(0x01F018);
+        y = g_cpu.Y;
+        if (y == 0xFFFF) break;
+        x = K(0x1C08);
+        KW(0x0A04 + x, 1);
+        a = x;
+        x = K(0x1C0E);
+        KW(0x0202 + x, a);
+        KW(0x0A06 + x, (uint16_t)(y + K(0x0A06 + x)));
+        KW(0x1C0E, K(0x1C0E) + 4);
+    }
+    y = 0;                                                   /* codes */
+    KW(0x1C0A, 0);
+    KW(0x1C0C, 0x0004);
+    uint16_t a;
+    do {
+        PROGRESS(x, y);
+        KW(0x1208 + y, K(0x1C0A));
+        x = K(0x1C0A);
+        KW(0x1408 + x, 0);
+        KW(0x1409 + x, 0);
+        a = K(0x1C0C);
+        x = 0x0404;
+        for (;;) {
+            int bit = -1;
+            if (a == K(0x0200 + x)) bit = 0;
+            else if (a == K(0x0202 + x)) bit = 1;
+            if (bit >= 0) {
+                uint16_t k = K(0x1C0A);
+                KW(0x1408 + k, K(0x1408 + k) + 1);
+                bool c = bit != 0;
+                f03a_rol((uint16_t)(0x1409 + k), &c);
+                a = x;
+                x = 0x0404;
+                continue;
+            }
+            x = (uint16_t)(x + 4);
+            if (x == K(0x1C0E)) break;
+        }
+        KW(0x1C0A, K(0x1C0A) + 3);
+        a = (uint16_t)(K(0x1C0C) + 4);
+        KW(0x1C0C, a);
+        y = (uint16_t)(y + 2);
+    } while (a != 0x0404);
+    LW(0x05, 0x0010);                                        /* pack */
+    KW(0x2800, 0);
+    LW(0x03, 0);
+    uint16_t result = 0x0000;
+    bool c = false;
+    do {
+        x = LR(0x01);
+        x = (uint16_t)(bus_read8(0x7F, (uint16_t)(0x2000 + x)) << 1);
+        c = false;                                           /* ASL of a byte */
+        x = K(0x1208 + x);
+        y = K(0x1408 + x) & 0x00FF;
+        a = K(0x1409 + x);
+        c = a & 1; a = (uint16_t)(a >> 1);                   /* ROR, carry in 0 */
+        x = LR(0x03);
+        for (;;) {
+            f03a_rol((uint16_t)(0x2800 + x), &c);
+            LW(0x05, LR(0x05) - 1);
+            if (LR(0x05) == 0) {
+                LW(0x05, 0x0010);
+                LW(0x03, LR(0x03) + 2);
+                x = LR(0x03);
+                c = x >= LR(0x01);
+                if (x == LR(0x01)) { result = 0xFFFF; goto done; }
+                KW(0x2800 + x, 0);
+            }
+            bool nc = a & 1;
+            a = (uint16_t)((a >> 1) | (c ? 0x8000 : 0));
+            c = nc;
+            if (--y == 0) break;
+        }
+        LW(0x01, LR(0x01) + 1);
+        PROGRESS(x, y);
+    } while (LR(0x01) != 0xE000);
+    x = LR(0x03);
+    do { c = false; f03a_rol((uint16_t)(0x2800 + x), &c); LW(0x05, LR(0x05) - 1); } while (LR(0x05) != 0);
+    x = (uint16_t)(K(0x1C0E) - 2);
+    KW(0x2002, K(0x0200 + x));
+    x = (uint16_t)(x - 2);
+    KW(0x2000, K(0x0200 + x));
+    for (x = 0x0004; x != 0x0800; x += 2) KW(0x2000 + x, K(0x0200 + x));
+    LW(0x17, (LR(0x03) + 0x0801) & 0xFFFE);
+done:
+#undef LW
+#undef LR
+#undef K
+#undef KW
+#undef PROGRESS
+    g_cpu.X = x; g_cpu.Y = y;
+    g_cpu.S = s0; g_cpu.DP = dp0; g_cpu.DB = db0;
+    CPU_SET_A16(result);
+}
+
+/* $01:EBB5 (JSL): the save/load menu loop. Waits a frame at a time
+ * ($E2CE) with the pointer kept below y $C8, until a click ($04CA bit 5):
+ * x $08-$16 leaves (sound $41, $AA = $0C); x $28-$86 picks a picture slot
+ * ($EC4B), x $D8-$E6 the page button ($ECAF); after either the animation
+ * ($0206/$0208) is waited out and the tool switch $A097 runs with no
+ * arguments. */
+void mp_01EBB5(void) {
+    uint8_t db = g_cpu.DB;
+    bus_write16(db, 0x0446, 0x0004);
+    call_jsl(0x01E09B);
+    call_jsl(0x00C410);
+    call_jsl(0x01DE97);
+    bus_write16(db, 0x04DE, 0x00D0);
+    for (;;) {
+        call_jsl(0x01E2CE);
+        call_jsl(0x008B3C);
+        if (bus_read16(db, 0x04DE) < 0x00C8) bus_write16(db, 0x04DE, 0x00C8);
+        call_jsl(0x008B44);
+        if (!(bus_read16(db, 0x04CA) & 0x0020)) continue;
+        uint16_t a = bus_read16(db, 0x04DC);
+        if (a < 0x0008) continue;
+        if (a < 0x0017) {
+            CPU_SET_A16(0x0041);
+            call_jsl(0x01D368);
+            CPU_SET_A16(0x000C);
+            bus_write16(0x00, (uint16_t)(g_cpu.DP + 0xAA), 0x000C);
+            return;
+        }
+        if (a < 0x0028) continue;
+        if (a < 0x0087) {
+            bus_write16(db, 0x0206, 0);
+            CPU_SET_A16(a);
+            call_jsr(0x01EC4B);
+        } else {
+            if (a < 0x00D8 || a >= 0x00E7) continue;
+            bus_write16(db, 0x0206, 0);
+            CPU_SET_A16(a);
+            call_jsr(0x01ECAF);
+        }
+        bus_write16(db, 0x0208, 0);
+        bus_write16(db, 0x0206, (uint16_t)(bus_read16(db, 0x0206) + 1));
+        do call_jsl(0x01E2CE); while (bus_read16(db, 0x0208) != 0);
+        push_a16(bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xAA)));
+        push_a16(0x0000);
+        call_jsl_ret(0x00A097, 0x01EC42);
+    }
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x01EBB5, mp_01EBB5);
+
+    func_table_register(0x01F03A, mp_01F03A);
+
     func_table_register(0x01EC4B, mp_01EC4B);
 
     func_table_register(0x00B780, mp_00B780);

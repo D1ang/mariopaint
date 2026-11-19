@@ -54,7 +54,9 @@ SCENARIOS = {
     # The coloring book (menu, third choice): its four pages, a colour and a
     # fill on each, back out with the dog.
     "coloring": [MODE_BAR, (129, 212), (138, 164), (128, 112), (46, 212), (128, 112),
-                 (72, 212), (128, 112), (96, 212), (128, 112), (119, 212), (128, 112), (223, 212)],
+                 (72, 212), (128, 112), (96, 212), (128, 112), (119, 212), (128, 112), (223, 212),
+                 # leave the picture menu (x $08-$16): $EBB5 returns
+                 (15, 212), (128, 112)],
     # The title screen: each logo letter starts its own little scene (the
     # title states of $01:8308); a while to watch each, then Mario.
     "title": ["notitle"] + [pt for x in (62, 86, 107, 118, 130, 144, 163, 174, 190, 203)
