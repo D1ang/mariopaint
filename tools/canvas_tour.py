@@ -88,6 +88,15 @@ SCENARIOS = {
                 (200, 160), (192, 212)] + [
         pt for i, x in enumerate(range(12, 240, 32))
         for pt in ((x, 8), (40 + i * 16, 60 + (i % 4) * 30))],
+    # The copy tool (bottom bar 168-183, tool 6, $9DFB): a drawing, an area
+    # dragged out, copies laid down, the flip/turn mode stepped (16-31).
+    "copy": [(78, 212), ("drag", 40, 60, 120, 110), ("drag", 60, 110, 110, 50), (175, 212),
+             ("drag", 30, 40, 130, 130), ("wait", 60), (170, 140), ("wait", 60), (23, 212),
+             (120, 170), (23, 212), (200, 90), ("wait", 60)],
+    # Booting with a saved game (the save check $00:D6D3 finds it valid),
+    # then loading it from the menu.
+    "savedboot": ["sram", MODE_BAR, (129, 212), (138, 123), (128, 112), (128, 190), ("wait", 2700),
+                  (128, 190), (128, 112)],
     # Save (the robot fills SRAM; START when it is done), then load it back.
     "saveload": [(47, 212), ("drag", 40, 60, 200, 150), MODE_BAR, (129, 212), (138, 82), (128, 112),
                  (128, 190), ("wait", 2700), (128, 190), (138, 123), (128, 112), (128, 190),
@@ -100,9 +109,28 @@ SCENARIOS = {
 }
 
 
+SRAM_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scratch", "sram", "saved.srm")
+
+
+def ensure_sram(rom):
+    """The battery RAM of a finished save: made once by the genuine ROM
+    (draw, save, wait for the robot) and kept in scratch/ (game-made data,
+    not committed)."""
+    if os.path.exists(SRAM_FIXTURE):
+        return SRAM_FIXTURE
+    os.makedirs(os.path.dirname(SRAM_FIXTURE), exist_ok=True)
+    pts = SCENARIOS["saveload"]
+    run(rom, pts, os.path.join(os.path.dirname(SRAM_FIXTURE), "make"), real=True,
+        extra_env={"SNESRECOMP_SRAM_DUMP": os.path.abspath(SRAM_FIXTURE)})
+    return SRAM_FIXTURE
+
+
 def run(rom, points, out, real=False, extra_env=None, title=True):
     """title=False skips the click through the title screen: the points then
     act on the title itself (from frame 300)."""
+    sram = None
+    if points and points[0] == "sram":           # start from a saved game
+        points, sram = points[1:], ensure_sram(rom)
     if points and points[0] == "notitle":        # a scenario on the title screen itself
         points, title = points[1:], False
     script, shots = (list(TITLE) if title else []), []
@@ -145,6 +173,8 @@ def run(rom, points, out, real=False, extra_env=None, title=True):
                SNESRECOMP_DUMP_PREFIX="s")
     if pokes:
         env["SNESRECOMP_POKE"] = " ".join(pokes)
+    if sram:
+        env["SNESRECOMP_SRAM_LOAD"] = os.path.abspath(sram)
     if real:
         env["MP_REALFRAME"] = "1"
     env.update(extra_env or {})
@@ -154,7 +184,7 @@ def run(rom, points, out, real=False, extra_env=None, title=True):
         f.write(r.stdout + r.stderr)
     pngs = sorted(glob.glob(os.path.join(out, "screenshot_*.png")))
     snaps = sorted(glob.glob(os.path.join(out, "s_f*.snap")))
-    points = [p for p in points if p != "notitle" and p[0] != "poke"]
+    points = [p for p in points if p not in ("notitle", "sram") and p[0] != "poke"]
     names = ["00_canvas"] + [
         (f"{i + 1:02d}_wait_{p[1]}" if p[0] == "wait" else
          f"{i + 1:02d}_drag_{p[1]}_{p[2]}_{p[3]}_{p[4]}" if p[0] == "drag" else

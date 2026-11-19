@@ -1139,7 +1139,7 @@ void mp_register_misc(void) {
     func_table_register(0x009E76, mp_009E76);
     func_table_register(0x009760, mp_009760);
     func_table_register(0x00E233, mp_00E233);
-    func_table_register(0x00E6DA, mp_00E6DA);
+    /* $00:E6DA is no routine (a point inside $E64F, which has its C version). */
     func_table_register(0x0082A7, mp_0082A7);
     func_table_register(0x01904A, mp_01904A);
     func_table_register(0x01934F, mp_01934F);
