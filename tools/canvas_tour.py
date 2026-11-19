@@ -69,6 +69,12 @@ SCENARIOS = {
     "music2": [MODE_BAR, (102, 212), (128, 112), (46, 212), ("wait", 300), (148, 212), ("wait", 600),
                (166, 212), ("wait", 600), (190, 212), ("wait", 600), (82, 212), (98, 212),
                (128, 212), (222, 212)],
+    # Animation Land with 4 frames: a stroke in each, then the player bar
+    # (bottom right) and its buttons.
+    "animation2": [MODE_BAR, (80, 212), (80, 56), (128, 112), ("drag", 40, 40, 100, 90), (180, 60),
+                   ("drag", 150, 40, 220, 90), (60, 150), ("drag", 40, 130, 100, 180), (180, 150),
+                   ("drag", 150, 130, 220, 180), (232, 212), ("wait", 300), (36, 212), ("wait", 300),
+                   (56, 212), ("wait", 300), (76, 212), ("wait", 300), (96, 212), ("wait", 300)],
     # Save (the robot fills SRAM; START when it is done), then load it back.
     "saveload": [(47, 212), ("drag", 40, 60, 200, 150), MODE_BAR, (129, 212), (138, 82), (128, 112),
                  (128, 190), ("wait", 2700), (128, 190), (138, 123), (128, 112), (128, 190),
