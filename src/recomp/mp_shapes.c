@@ -45,209 +45,181 @@ void mp_00AAFB(void) {
     bus_wram_write16(0x1B1F, 0x0000);
 }
 
-/* ========================================================================
- * $00:AB26 — Rectangle drawing
- *
- * Draws a rectangle from ($22,$24) to ($26,$28).
- * Draws 4 lines: top, right, bottom, left.
- * ======================================================================== */
+/* $00:AB26: the rectangle tool: the four edges of ($22,$24)-($26,$28)
+ * by $AF5A; $1B1F/$1B20 $FF while drawing ($1B21 = 0 on the first press). */
 void mp_00AB26(void) {
-    uint8_t draw = bus_wram_read8(0x0020);
-    if (draw == 0) {
-        op_sep(0x20);
-        bus_wram_write8(0x1B21, 0x00);
-        bus_wram_write8(0x1B1F, 0xFF);
-        bus_wram_write8(0x1B20, 0xFF);
-        op_rep(0x20);
+    uint8_t db = g_cpu.DB;
+#define RD(o)     bus_read16(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define RDW(o, v) bus_write16(0x00, (uint16_t)(g_cpu.DP + (o)), (uint16_t)(v))
+    if (RD(0x20) == 0) {
+        bus_write8(db, 0x1B21, 0x00);
+        bus_write8(db, 0x1B1F, 0xFF);
+        bus_write8(db, 0x1B20, 0xFF);
     }
-
-    /* Top edge: ($22,$24) → ($26,$24) */
-    bus_wram_write16(0x003E, bus_wram_read16(0x0022));
-    bus_wram_write16(0x0040, bus_wram_read16(0x0024));
-    bus_wram_write16(0x0042, bus_wram_read16(0x0026));
-    bus_wram_write16(0x0044, bus_wram_read16(0x0024));
-    func_table_call(0x00AF5A);
-
-    /* Right edge: ($26,$24) → ($26,$28) */
-    bus_wram_write16(0x003E, bus_wram_read16(0x0026));
-    bus_wram_write16(0x0040, bus_wram_read16(0x0024));
-    bus_wram_write16(0x0042, bus_wram_read16(0x0026));
-    bus_wram_write16(0x0044, bus_wram_read16(0x0028));
-    func_table_call(0x00AF5A);
-
-    /* Bottom edge: ($26,$28) → ($22,$28) */
-    bus_wram_write16(0x003E, bus_wram_read16(0x0026));
-    bus_wram_write16(0x0040, bus_wram_read16(0x0028));
-    bus_wram_write16(0x0042, bus_wram_read16(0x0022));
-    bus_wram_write16(0x0044, bus_wram_read16(0x0028));
-    func_table_call(0x00AF5A);
-
-    /* Left edge: ($22,$28) → ($22,$24) */
-    bus_wram_write16(0x003E, bus_wram_read16(0x0022));
-    bus_wram_write16(0x0040, bus_wram_read16(0x0028));
-    bus_wram_write16(0x0042, bus_wram_read16(0x0022));
-    bus_wram_write16(0x0044, bus_wram_read16(0x0024));
-    func_table_call(0x00AF5A);
-
-    bus_wram_write16(0x1B1F, 0x0000);
+    static const uint8_t edge[4][4] = {
+        { 0x22, 0x24, 0x26, 0x24 }, { 0x26, 0x24, 0x26, 0x28 },
+        { 0x26, 0x28, 0x22, 0x28 }, { 0x22, 0x28, 0x22, 0x24 },
+    };
+    for (int i = 0; i < 4; i++) {
+        RDW(0x3E, RD(edge[i][0])); RDW(0x40, RD(edge[i][1]));
+        RDW(0x42, RD(edge[i][2])); RDW(0x44, RD(edge[i][3]));
+        call_jsr(0x00AF5A);
+    }
+    bus_write16(db, 0x1B1F, 0x0000);
+#undef RD
+#undef RDW
 }
 
-/* ========================================================================
- * $00:AB8A — Ellipse drawing
- *
- * Draws an ellipse bounded by ($22,$24) to ($26,$28).
- * Uses the midpoint ellipse algorithm with 4-way symmetry.
- * ======================================================================== */
+/* ---- The ellipse tool ------------------------------------------------ */
+#define ED(o)      bus_read16(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define EDW(o, v)  bus_write16(0x00, (uint16_t)(g_cpu.DP + (o)), (uint16_t)(v))
+#define ED8(o)     bus_read8(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define EDW8(o, v) bus_write8(0x00, (uint16_t)(g_cpu.DP + (o)), (uint8_t)(v))
+#define ENEG(a, b) ((((uint16_t)((a) - (b))) & 0x8000) != 0)
+
+/* $00:ACDC: the eight mirrored points of one step (offsets $64/$66 and
+ * $6A/$68 around the centre $52/$54), each plotted by $B051 when inside
+ * the canvas margins $19B6..$19BC set here; then the midpoint step:
+ * error $5E, counter $5C up, radius $5A down when the error goes below 0. */
+void mp_00ACDC(void) {
+    uint8_t db = g_cpu.DB;
+#define R16(o)   bus_read16(db, (uint16_t)(o))
+#define W16(o,v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+    W16(0x19B6, R16(0x19AE) - 4);
+    W16(0x19B8, R16(0x19B0) + 12);
+    W16(0x19BA, R16(0x19B2) - 8);
+    W16(0x19BC, R16(0x19B4) + 8);
+    const struct { uint8_t dx, dy; int sx, sy; } pt[8] = {
+        { 0x64, 0x66, +1, +1 }, { 0x64, 0x66, +1, -1 }, { 0x64, 0x66, -1, +1 }, { 0x64, 0x66, -1, -1 },
+        { 0x6A, 0x68, +1, +1 }, { 0x6A, 0x68, +1, -1 }, { 0x6A, 0x68, -1, +1 }, { 0x6A, 0x68, -1, -1 },
+    };
+    for (int i = 0; i < 8; i++) {
+        uint16_t x = (uint16_t)(pt[i].sx > 0 ? ED(0x52) + ED(pt[i].dx) : ED(0x52) - ED(pt[i].dx));
+        if (pt[i].sx > 0 ? !ENEG(x, R16(0x19B8)) : ENEG(x, R16(0x19B6))) continue;
+        EDW(0x86, x);
+        uint16_t y = (uint16_t)(pt[i].sy > 0 ? ED(0x54) + ED(pt[i].dy) : ED(0x54) - ED(pt[i].dy));
+        if (pt[i].sy > 0 ? !ENEG(y, R16(0x19BC)) : ENEG(y, R16(0x19BA))) continue;
+        EDW(0x88, y);
+        call_jsr(0x00B051);
+    }
+    uint16_t e = (uint16_t)(ED(0x5E) - ED(0x5C) - ED(0x5C) - 1);
+    EDW(0x5E, e);
+    EDW(0x5C, ED(0x5C) + 1);
+    if (e & 0x8000) {
+        EDW(0x5A, ED(0x5A) - 1);
+        EDW(0x5E, (uint16_t)(ED(0x5E) + ED(0x5A) + ED(0x5A)));
+    }
+    CPU_SET_A16(ED(0x5E));
+#undef R16
+#undef W16
+}
+
+/* (a x b) / c on the hardware multiplier and divider, 8-bit operands, as
+ * the ROM does it (the quotient's two bytes into DP o, o+1). */
+static void ell_muldiv(uint8_t a, uint8_t b, uint8_t c, uint8_t o) {
+    uint8_t db = g_cpu.DB;
+    bus_write8(db, 0x4202, a);
+    bus_write8(db, 0x4203, b);
+    bus_write8(db, 0x4204, bus_read8(db, 0x4216));
+    bus_write8(db, 0x4205, bus_read8(db, 0x4217));
+    bus_write8(db, 0x4206, c);
+    EDW8(o, bus_read8(db, 0x4214));
+    EDW8(o + 1, bus_read8(db, 0x4215));
+}
+
+/* $00:AB8A: the ellipse tool: corners $22/$24 and $26/$28 give the centre
+ * $52/$54 and the half axes $56/$58; the longer axis is stepped by the
+ * midpoint method ($ACDC), the other scaled by the axis ratio. $1B1F/$1B20
+ * are $FF while it draws ($1B21 = 0 on the first press). */
 void mp_00AB8A(void) {
-    uint8_t draw = bus_wram_read8(0x0020);
-    if (draw == 0) {
-        op_sep(0x20);
-        bus_wram_write8(0x1B21, 0x00);
-        bus_wram_write8(0x1B1F, 0xFF);
-        bus_wram_write8(0x1B20, 0xFF);
-        op_rep(0x20);
+    uint8_t db = g_cpu.DB;
+    if (ED(0x20) == 0) {
+        bus_write8(db, 0x1B21, 0x00);
+        bus_write8(db, 0x1B1F, 0xFF);
+        bus_write8(db, 0x1B20, 0xFF);
     }
-
-    /* Compute center and radii */
-    int16_t x1 = (int16_t)bus_wram_read16(0x0022);
-    int16_t y1 = (int16_t)bus_wram_read16(0x0024);
-    int16_t x2 = (int16_t)bus_wram_read16(0x0026);
-    int16_t y2 = (int16_t)bus_wram_read16(0x0028);
-
-    int16_t cx = (x1 + x2) / 2;
-    int16_t cy = (y1 + y2) / 2;
-    int16_t rx = (x2 - x1) / 2;
-    int16_t ry = (y2 - y1) / 2;
-    if (rx < 0) rx = -rx;
-    if (ry < 0) ry = -ry;
-
-    bus_wram_write16(0x0052, (uint16_t)cx);
-    bus_wram_write16(0x0054, (uint16_t)cy);
-    bus_wram_write16(0x0056, (uint16_t)rx);
-    bus_wram_write16(0x0058, (uint16_t)ry);
-
-    if (rx == 0 && ry == 0) {
-        /* Degenerate: single point */
-        bus_wram_write16(0x0086, (uint16_t)cx);
-        bus_wram_write16(0x0088, (uint16_t)cy);
-        mp_00B051();
-        bus_wram_write16(0x1B1F, 0x0000);
-        return;
+    EDW(0x52, ED(0x22));
+    EDW(0x54, ED(0x24));
+    uint16_t d = (uint16_t)(ED(0x26) - ED(0x52));
+    if (d & 0x8000) d = (uint16_t)-d;
+    EDW(0x56, d);
+    d = (uint16_t)(ED(0x28) - ED(0x54));
+    if (d & 0x8000) d = (uint16_t)-d;
+    EDW(0x58, d);
+    if ((ED(0x56) | ED(0x58)) != 0) {
+        bool wide = ED(0x56) >= ED(0x58);
+        uint16_t r = wide ? ED(0x56) : ED(0x58);
+        EDW(0x5E, r); EDW(0x5A, r); EDW(0x5C, 0);
+        while (ED(0x5A) >= ED(0x5C)) {
+            if (wide) {
+                ell_muldiv(ED8(0x5A), ED8(0x58), ED8(0x56), 0x68);
+                ell_muldiv(ED8(0x5C), ED8(0x58), ED8(0x56), 0x66);
+                EDW(0x64, ED(0x5A)); EDW(0x6A, ED(0x5C));
+            } else {
+                ell_muldiv(ED8(0x5A), ED8(0x56), ED8(0x58), 0x64);
+                ell_muldiv(ED8(0x5C), ED8(0x56), ED8(0x58), 0x6A);
+                EDW(0x68, ED(0x5A)); EDW(0x66, ED(0x5C));
+            }
+            call_jsr(0x00ACDC);
+            if (g_quit) return;
+        }
     }
-
-    /* For the full midpoint ellipse algorithm, dispatch to the
-     * original code which does precise integer arithmetic.
-     * Plot symmetric points using B051. */
-    /* Simplified: draw 4 quarter-arcs using line segments */
-    int steps = (rx > ry) ? rx : ry;
-    if (steps < 4) steps = 4;
-    if (steps > 64) steps = 64;
-
-    int16_t prev_px = cx + rx, prev_py = cy;
-    for (int i = 1; i <= steps; i++) {
-        /* Approximate using integer arithmetic */
-        int16_t px = cx + (rx * (steps - i)) / steps;
-        int16_t py = cy + (ry * i) / steps;
-
-        bus_wram_write16(0x0086, (uint16_t)px);
-        bus_wram_write16(0x0088, (uint16_t)py);
-        mp_00B051();
-
-        /* Mirror to other 3 quadrants */
-        bus_wram_write16(0x0086, (uint16_t)(2 * cx - px));
-        bus_wram_write16(0x0088, (uint16_t)py);
-        mp_00B051();
-
-        bus_wram_write16(0x0086, (uint16_t)px);
-        bus_wram_write16(0x0088, (uint16_t)(2 * cy - py));
-        mp_00B051();
-
-        bus_wram_write16(0x0086, (uint16_t)(2 * cx - px));
-        bus_wram_write16(0x0088, (uint16_t)(2 * cy - py));
-        mp_00B051();
-
-        prev_px = px;
-        prev_py = py;
-    }
-
-    bus_wram_write16(0x1B1F, 0x0000);
+    bus_write16(db, 0x1B1F, 0x0000);                         /* $ABC6 */
 }
+#undef ED
+#undef EDW
+#undef ED8
+#undef EDW8
+#undef ENEG
 
-/* ========================================================================
- * $00:AF5A — Bresenham line drawing
- *
- * Draws a line from ($3E,$40) to ($42,$44) pixel by pixel.
- * Handles both X-major and Y-major cases with correct stepping.
- * Each pixel is plotted via B051.
- * ======================================================================== */
+/* $00:AF5A: a line from ($3E,$40) to ($42,$44), plotted by $B051 point
+ * by point (Bresenham): $46 the minor step, $48 the major step, $4A/$4C
+ * the absolute deltas, $4E the error. The start corner is moved along. */
 void mp_00AF5A(void) {
-    int16_t x1 = (int16_t)bus_wram_read16(0x003E);
-    int16_t y1 = (int16_t)bus_wram_read16(0x0040);
-    int16_t x2 = (int16_t)bus_wram_read16(0x0042);
-    int16_t y2 = (int16_t)bus_wram_read16(0x0044);
-
-    /* Step direction setup (matches ASM register swap logic):
-     * Start with reg_x=+1, reg_y=-1. Swap if x1<x2, swap again if y1<y2.
-     * $46 = reg_x (minor axis step), $48 = +1 (major axis step). */
-    int16_t reg_x = 1, reg_y = -1;
-    if (x1 < x2) { int16_t t = reg_x; reg_x = reg_y; reg_y = t; }
-    if (y1 < y2) { int16_t t = reg_x; reg_x = reg_y; reg_y = t; }
-    int16_t minor_step = reg_x;  /* $46 */
-    int16_t major_step = 1;      /* $48 */
-
-    /* Absolute deltas */
-    int16_t dx = x2 - x1; if (dx < 0) dx = -dx;
-    int16_t dy = y2 - y1; if (dy < 0) dy = -dy;
-
-    if (dx >= dy) {
-        /* X-major: step X by major_step, conditionally Y by minor_step */
-        if (x1 >= x2) {
-            minor_step = -minor_step;
-            major_step = -1;
-        }
-
-        bus_wram_write16(0x0086, (uint16_t)x1);
-        bus_wram_write16(0x0088, (uint16_t)y1);
-        func_table_call(0x00B051);
-
-        int16_t error = dx >> 1;
-        for (int16_t i = 1; i <= dx; i++) {
-            error -= dy;
-            if (error < 0) {
-                error += dx;
-                y1 += minor_step;
-            }
-            x1 += major_step;
-
-            bus_wram_write16(0x0086, (uint16_t)x1);
-            bus_wram_write16(0x0088, (uint16_t)y1);
-            func_table_call(0x00B051);
-        }
-    } else {
-        /* Y-major: step Y by major_step, conditionally X by minor_step */
-        if (y1 >= y2) {
-            minor_step = -minor_step;
-            major_step = -1;
-        }
-
-        bus_wram_write16(0x0086, (uint16_t)x1);
-        bus_wram_write16(0x0088, (uint16_t)y1);
-        func_table_call(0x00B051);
-
-        int16_t error = dy >> 1;
-        for (int16_t i = 1; i <= dy; i++) {
-            error -= dx;
-            if (error < 0) {
-                error += dy;
-                x1 += minor_step;
-            }
-            y1 += major_step;
-
-            bus_wram_write16(0x0086, (uint16_t)x1);
-            bus_wram_write16(0x0088, (uint16_t)y1);
-            func_table_call(0x00B051);
-        }
+#define LD(o)      bus_read16(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define LDW(o, v)  bus_write16(0x00, (uint16_t)(g_cpu.DP + (o)), (uint16_t)(v))
+#define LNEG(a, b) ((((uint16_t)((a) - (b))) & 0x8000) != 0)
+    uint16_t x = 0x0001, y = 0xFFFF, t;
+    if (LNEG(LD(0x3E), LD(0x42))) { t = x; x = y; y = t; }
+    if (LNEG(LD(0x40), LD(0x44))) { t = x; x = y; y = t; }
+    LDW(0x46, x);
+    LDW(0x48, 0x0001);
+    uint16_t d = (uint16_t)(LD(0x42) - LD(0x3E));
+    if (d & 0x8000) d = (uint16_t)-d;
+    LDW(0x4A, d);
+    d = (uint16_t)(LD(0x44) - LD(0x40));
+    if (d & 0x8000) d = (uint16_t)-d;
+    LDW(0x4C, d);
+    bool xmajor = !LNEG(LD(0x4A), LD(0x4C));
+    /* major axis: X ($3E, delta $4A) or Y ($40, delta $4C) */
+    uint8_t maj = xmajor ? 0x3E : 0x40, mnr = xmajor ? 0x40 : 0x3E;
+    uint8_t dmaj = xmajor ? 0x4A : 0x4C, dmnr = xmajor ? 0x4C : 0x4A;
+    uint8_t emaj = xmajor ? 0x42 : 0x44;
+    if (!LNEG(LD(maj), LD(emaj))) {
+        LDW(0x46, (uint16_t)-LD(0x46));
+        LDW(0x48, 0xFFFF);
     }
+    LDW(0x86, LD(0x3E));
+    LDW(0x88, LD(0x40));
+    call_jsr(0x00B051);
+    LDW(0x4E, (uint16_t)(LD(dmaj) >> 1));
+    for (uint16_t i = 1; i <= LD(dmaj); i++) {
+        uint16_t e = (uint16_t)(LD(0x4E) - LD(dmnr));
+        LDW(0x4E, e);
+        if (e & 0x8000) {
+            LDW(0x4E, (uint16_t)(LD(0x4E) + LD(dmaj)));
+            LDW(mnr, (uint16_t)(LD(mnr) + LD(0x46)));
+        }
+        LDW(maj, (uint16_t)(LD(maj) + LD(0x48)));
+        LDW(0x86, LD(0x3E));
+        LDW(0x88, LD(0x40));
+        call_jsr(0x00B051);
+        g_cpu.X = (uint16_t)(i + 1);
+        if (g_quit) return;
+    }
+#undef LD
+#undef LDW
+#undef LNEG
 }
 
 /* $00:AF2C: clear sprite X's size/high-X bits in the OAM high table
@@ -866,6 +838,7 @@ void mp_register_shapes(void) {
     func_table_register(0x00AAFB, mp_00AAFB);
     func_table_register(0x00AB26, mp_00AB26);
     func_table_register(0x00AB8A, mp_00AB8A);
+    func_table_register(0x00ACDC, mp_00ACDC);
     func_table_register(0x00ADFB, mp_00ADFB);
     func_table_register(0x00AF5A, mp_00AF5A);
     func_table_register(0x00B0D3, mp_00B0D3);

@@ -103,6 +103,12 @@ SCENARIOS = {
     "fill": [(62, 212), ("drag", 60, 60, 160, 60), ("drag", 160, 60, 160, 140),
              ("drag", 160, 140, 60, 140), ("drag", 60, 140, 60, 60), ("poke", "7E04D0=05"),
              (110, 100), ("wait", 400), ("poke", "7E04D0=05"), (200, 170), ("wait", 400)],
+    # The shapes from the size panel (bottom bar 128-143, then slot n: $AE =
+    # (n-1)/4+1): ellipse ($AB8A), rectangle ($AB26), line ($AAFB).
+    "shapes": [(135, 212), (168, 212), ("drag", 80, 70, 150, 130), ("wait", 100),
+               (135, 212), (104, 212), ("drag", 60, 60, 120, 160), ("wait", 100),
+               (135, 212), (200, 212), ("drag", 150, 50, 220, 100), ("wait", 100),
+               (135, 212), (40, 212), ("drag", 30, 150, 200, 60), ("wait", 100)],
     # Save (the robot fills SRAM; START when it is done), then load it back.
     "saveload": [(47, 212), ("drag", 40, 60, 200, 150), MODE_BAR, (129, 212), (138, 82), (128, 112),
                  (128, 190), ("wait", 2700), (128, 190), (138, 123), (128, 112), (128, 190),
