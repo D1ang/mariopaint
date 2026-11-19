@@ -1525,7 +1525,115 @@ void mp_01B698(void) {
     bus_write8(g_cpu.DB, 0x0312, (uint8_t)(bus_read8(g_cpu.DB, 0x0312) - 1));
 }
 
+/* Push two bytes of 4 (half size 4 x 4) and run the sting test $BF29. */
+static void sting_4x4(uint8_t x) {
+    bus_wram_write8(g_cpu.S, 0x04);
+    bus_wram_write8((uint16_t)(g_cpu.S - 1), 0x04);
+    g_cpu.S = (uint16_t)(g_cpu.S - 2);
+    g_cpu.X = x;
+    call_jsr(0x01BF29);
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    CPU_SET_A8(0x04);
+}
+
+/* $01:BAD1 (8-bit): move projectiles $0F..0, speed capped at $7F; each
+ * stings once its delay $0563 has run out. */
+void mp_01BAD1(void) {
+    for (int x = 0x0F; x >= 0; x--) {
+        if (GRD(0x0353 + x) == 0) continue;
+        g_cpu.X = (uint16_t)x;
+        call_jsr(0x01BD01);
+        uint8_t v = (uint8_t)(GRD(0x04A3 + x) + GRD(0x0503 + x));
+        if (v >= 0x7F) { GWR(0x04A3 + x, 0x7F); GWR(0x0503 + x, 0); }
+        shot_bounds((uint8_t)x);
+        uint8_t t = GRD(0x0563 + x);
+        if (t) { GWR(0x0563 + x, t - 1); continue; }
+        sting_4x4((uint8_t)x);
+    }
+    g_cpu.X = (uint16_t)((g_cpu.X & 0xFF00) | 0xFF);
+}
+
+/* $01:BBBE (8-bit): the homing projectiles $2E..$10. While the delay runs:
+ * from $60 on they wait (speed 0 at $70); below $60 they fly at $05B3 and,
+ * in turn ($0563 low nibble = slot low nibble), aim at the swatter
+ * ($04DC/$04DE) through the heading routine $CB10. At 0 they sting. */
+void mp_01BBBE(void) {
+    for (int x = 0x2E; x >= 0x10; x--) {
+        if (GRD(0x0353 + x) == 0) continue;
+        g_cpu.X = (uint16_t)x;
+        call_jsr(0x01BD01);
+        shot_bounds((uint8_t)x);
+        uint8_t t = GRD(0x0563 + x);
+        if (t == 0) { sting_4x4((uint8_t)x); continue; }
+        GWR(0x0563 + x, --t);
+        if (t >= 0x60) { if (t == 0x70) GWR(0x04A3 + x, 0); continue; }
+        GWR(0x04A3 + x, GRD(0x05B3));
+        if (GRD(0x0040) != 0) continue;
+        GWR(0x05E6, x & 0x0F);
+        if ((GRD(0x0563 + x) & 0x0F) != GRD(0x05E6)) continue;
+        GWR(0x0000, 0);
+        uint8_t d = (uint8_t)(bus_read8(0x00, 0x04DE) - GRD(0x0473 + x));
+        if (bus_read8(0x00, 0x04DE) < GRD(0x0473 + x)) { d = (uint8_t)-d; GWR(0x0000, GRD(0x0000) + 1); }
+        GWR(0x0003, d);
+        GWR(0x0000, GRD(0x0000) << 1);
+        d = (uint8_t)(bus_read8(0x00, 0x04DC) - GRD(0x0413 + x));
+        if (bus_read8(0x00, 0x04DC) < GRD(0x0413 + x)) { d = (uint8_t)-d; GWR(0x0000, GRD(0x0000) + 1); }
+        GWR(0x0002, d);
+        g_cpu.X = (uint16_t)x;
+        call_jsr(0x01CB10);
+        GWR(0x04D3 + x, GRD(0x0004));
+        CPU_SET_A8(0x04);
+        sting_4x4((uint8_t)x);
+    }
+    g_cpu.X = (uint16_t)((g_cpu.X & 0xFF00) | 0x0F);
+}
+
+/* $01:B925 (8-bit): the swatter hits the boss ($05D7 below 7, hit box
+ * $0030-$0036 around $014B/$01CD, +-8): hit sounds, the boss reels
+ * (step 7, saving the old step), and after 20 hits ($C9) it is beaten:
+ * jingle, next step, palette back ($B5DC). Every second hit from the
+ * tenth on also runs $B9FB. */
+void mp_01B925(void) {
+    if (GRD(0x05D7) >= 0x07 || GRD(0x002C) == 0) return;
+    uint8_t a = GRD(0x014B), lo = (uint8_t)(a - 8);
+    if (lo < GRD(0x0030)) { if ((uint8_t)(a + 8) < GRD(0x0030)) return; }
+    else if (lo >= GRD(0x0032)) return;
+    a = GRD(0x01CD); lo = (uint8_t)(a - 8);
+    if (lo < GRD(0x0034)) { if ((uint8_t)(a + 8) < GRD(0x0034)) return; }
+    else if (lo >= GRD(0x0036)) return;
+    CPU_SET_A8(0x0A); call_jsl(0x01D348);
+    CPU_SET_A8(GRD(0x0014) == 0x02 ? 0x39 : 0x38); call_jsl(0x01D368);
+    GWR(0x05E7, 0);
+    GWR(0x05D8, GRD(0x05D7));
+    GWR(0x05D7, 0x07);
+    GWR(0x004B, GRD(0x0047));
+    GWR(0x0047, 0x14);
+    GWR(0x008C, GRD(0x0088));
+    GWR(0x0088, 0);
+    GWR(0x0048, 0x05);
+    GWR(0x002E, 0x01);
+    uint8_t hits = (uint8_t)(GRD(0x00C9) + 1);
+    GWR(0x00C9, hits);
+    bus_wram_write8(g_cpu.S, hits);                          /* PHA */
+    g_cpu.S = (uint16_t)(g_cpu.S - 1);
+    if (hits >= 0x0A && !((hits - 0x0A) & 1)) { CPU_SET_A8((uint8_t)(hits - 0x0A)); call_jsr(0x01B9FB); }
+    g_cpu.S = (uint16_t)(g_cpu.S + 1);
+    if (hits < 0x14) { CPU_SET_A8(hits); return; }
+    CPU_SET_A8(GRD(0x0014) == 0x02 ? 0x1E : 0x1A); call_jsl(0x01D308);
+    GWR(0x05D7, GRD(0x05D7) + 1);
+    GWR(0x0047, 0x18);
+    GWR(0x0048, 0x05);
+    GWR(0x0049, 0x02);
+    GWR(0x004A, 0);
+    GWR(0x0312, 0xFF);
+    call_jsr(0x01B5DC);
+}
+
 void mp_register_gnat(void) {
+    func_table_register(0x01BAD1, mp_01BAD1);
+    func_table_register(0x01BBBE, mp_01BBBE);
+    func_table_register(0x01B925, mp_01B925);
+
     func_table_register(0x01BB1A, mp_01BB1A);
     func_table_register(0x01BC57, mp_01BC57);
     func_table_register(0x01B698, mp_01B698);

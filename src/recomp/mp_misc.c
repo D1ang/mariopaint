@@ -1331,7 +1331,187 @@ void mp_01F018(void) {
     CPU_SET_A16(x);
 }
 
+/* $00:B780: pattern A (8 per row) from bank $0EBA + $0B: two blocks of
+ * $20 words ($200 bytes apart) into $1B2A..$1BA9, then $01:D597. */
+void mp_00B780(void) {
+    uint8_t p0 = cpu_get_p();
+    uint16_t a = CPU_A16();
+    uint16_t y = (uint16_t)(((a & 0x0007) + ((a & 0xFFF8) << 1)) << 6);
+    uint8_t bank = (uint8_t)(bus_read8(g_cpu.DB, 0x0EBA) + 0x0B);
+    uint16_t x = 0;
+    for (; x != 0x0040; x += 2, y += 2) bus_write16(0x00, (uint16_t)(0x1B2A + x), bus_read16(bank, (uint16_t)(0x8000 + y)));
+    y = (uint16_t)(y + 0x01C0);
+    for (; x != 0x0080; x += 2, y += 2) bus_write16(0x00, (uint16_t)(0x1B2A + x), bus_read16(bank, (uint16_t)(0x8000 + y)));
+    g_cpu.X = x; g_cpu.Y = y;
+    cpu_set_p(p0);
+    call_jsl(0x01D597);
+}
+
+/* $01:EF36 (JSL): expand the run-length data at $7F:2000 into
+ * $7E:4400..$7E:FE51: a negative word is a copy of (high & $7F) bytes from
+ * (low byte) back, a positive word a run of that many literal bytes.
+ * $01:EFB9 (the progress count) runs once per byte. */
+void mp_01EF36(void) {
+    uint8_t db0 = g_cpu.DB;
+    uint16_t dp0 = g_cpu.DP, s0 = g_cpu.S;
+    bus_wram_write8(s0, db0);                                /* PHB; DB = $7F; PHD */
+    bus_wram_write16((uint16_t)(s0 - 2), dp0);
+    g_cpu.DB = 0x7F;
+    uint16_t d = (uint16_t)(s0 - 3 - 0x1E);
+    g_cpu.S = d; g_cpu.DP = d;
+#define LW(o, v) bus_write16(0x00, (uint16_t)(d + (o)), (uint16_t)(v))
+#define LR(o)    bus_read16(0x00, (uint16_t)(d + (o)))
+    uint16_t y = 0, x = 0;
+    while (x < 0xBA52) {
+        uint16_t w = bus_read16(0x7F, (uint16_t)(0x2000 + y));
+        if (w & 0x8000) {
+            LW(0x02, w & 0x00FF);
+            LW(0x04, (uint16_t)((w & 0x7F00) >> 8));
+            uint16_t src = (uint16_t)(x - LR(0x02));
+            bool out = false;
+            do {
+                bus_write8(0x7E, (uint16_t)(0x4400 + x), bus_read8(0x7E, (uint16_t)(0x4400 + src)));
+                g_cpu.X = x; g_cpu.Y = src;
+                call_jsr(0x01EFB9);
+                src++; x++;
+                if (x >= 0xBA52) { out = true; break; }
+                LW(0x04, LR(0x04) - 1);
+            } while (LR(0x04) != 0);
+            if (out) break;
+            y = (uint16_t)(y + 2);
+        } else {
+            LW(0x04, w);
+            y = (uint16_t)(y + 2);
+            bool out = false;
+            do {
+                bus_write8(0x7E, (uint16_t)(0x4400 + x), bus_read8(0x7F, (uint16_t)(0x2000 + y)));
+                g_cpu.X = x; g_cpu.Y = y;
+                call_jsr(0x01EFB9);
+                x++; y++;
+                if (x >= 0xBA52) { out = true; break; }
+                LW(0x04, LR(0x04) - 1);
+            } while (LR(0x04) != 0);
+            if (out) break;
+        }
+    }
+#undef LW
+#undef LR
+    g_cpu.X = x; g_cpu.Y = y;
+    g_cpu.S = s0; g_cpu.DP = dp0; g_cpu.DB = db0;
+}
+
+/* $01:F21D (JSL, length argument on the stack): Huffman-decode the save.
+ * The tree (16 words a node pair at $7F:0200, copied from $7F:2000) and
+ * the bit stream (moved up to end at $7F:FFFF); bits are taken by ROL of
+ * each stream word through the carry, as the ROM does, so the stream
+ * words end rotated. Bytes go out to $7F:2000 + $03. Returns A = 0 and
+ * the decoded length in the argument slot, or A = $FFFF when the output
+ * runs into the input. $01:EFB9 counts progress per stream word. */
+void mp_01F21D(void) {
+    uint8_t db0 = g_cpu.DB;
+    uint16_t dp0 = g_cpu.DP, s0 = g_cpu.S;
+    bus_wram_write8(s0, db0);
+    bus_wram_write16((uint16_t)(s0 - 2), dp0);
+    g_cpu.DB = 0x7F;
+    uint16_t d = (uint16_t)(s0 - 3 - 0x10);
+    g_cpu.S = d; g_cpu.DP = d;
+#define LW(o, v) bus_write16(0x00, (uint16_t)(d + (o)), (uint16_t)(v))
+#define LR(o)    bus_read16(0x00, (uint16_t)(d + (o)))
+#define K(o)     bus_read16(0x7F, (uint16_t)(o))
+#define KW(o, v) bus_write16(0x7F, (uint16_t)(o), (uint16_t)(v))
+    for (int x = 0x07FE; x >= 0; x -= 2) KW(0x0200 + x, K(0x2000 + x));
+    uint16_t arg = LR(0x17);
+    bool c = arg >= 0x0800;                                  /* SEC; SBC #$0800 */
+    uint16_t x = (uint16_t)(arg - 0x0800), y = 0xD800;
+    do {
+        KW((uint16_t)(0x27FE + y), K((uint16_t)(0x27FE + x)));
+        y = (uint16_t)(y - 2); x = (uint16_t)(x - 2);
+    } while (x != 0);
+    LW(0x01, y);
+    LW(0x03, 0);
+    LW(0x07, 0x0011);
+    uint16_t result;
+    for (;;) {
+        LW(0x05, 0);                                         /* $F257 */
+        bool leaf = false;
+        while (!leaf) {
+            LW(0x07, LR(0x07) - 1);                          /* $F259 */
+            if (LR(0x07) == 0) {
+                LW(0x01, LR(0x01) + 2);
+                call_jsr(0x01EFB9);
+                if (LR(0x01) == 0xD800) { LW(0x17, LR(0x03)); result = 0x0000; goto done; }
+                c = LR(0x01) >= 0xD800;
+                LW(0x07, 0x0010);
+            }
+            uint16_t p = LR(0x01);                           /* $F273: ROL $2800,x */
+            uint16_t w = K((uint16_t)(0x2800 + p));
+            bool bit = (w & 0x8000) != 0;
+            KW((uint16_t)(0x2800 + p), (uint16_t)((w << 1) | (c ? 1 : 0)));
+            c = bit;
+            uint16_t node = K((uint16_t)((bit ? 0x0202 : 0x0200) + LR(0x05)));
+            LW(0x05, node);
+            leaf = K((uint16_t)(0x0200 + node)) == 0;
+        }
+        KW((uint16_t)(0x2000 + LR(0x03)), K((uint16_t)(0x0202 + LR(0x05))));   /* $F298 */
+        LW(0x03, LR(0x03) + 1);
+        c = LR(0x03) >= LR(0x01);
+        if (LR(0x03) == LR(0x01)) { result = 0xFFFF; goto done; }
+    }
+done:
+#undef LW
+#undef LR
+#undef K
+#undef KW
+    g_cpu.S = s0; g_cpu.DP = dp0; g_cpu.DB = db0;
+    CPU_SET_A16(result);
+}
+
+/* $01:EC4B (JSR from the menu loop $EBB5, A = pointer x): which of the
+ * picture slots ($28 + n*$18, 15 wide) was clicked; then sound 3, the
+ * tool switch ($A097: tool $AA, one argument, the slot) and the slot's
+ * picture (long pointer at $01:EC9F + slot*4) copied to $7E:A000-$FFFF. */
+void mp_01EC4B(void) {
+    uint8_t db0 = g_cpu.DB;
+    uint16_t dp0 = g_cpu.DP, s0 = g_cpu.S;
+    bus_wram_write8(s0, db0);
+    bus_wram_write16((uint16_t)(s0 - 2), dp0);
+    g_cpu.S = (uint16_t)(s0 - 3);
+    uint16_t a = (uint16_t)(CPU_A16() - 0x28), y = 0;
+    while (a >= 0x18) { a = (uint16_t)(a - 0x18); y++; }
+    g_cpu.Y = y;
+    if (a < 0x0F) {
+        CPU_SET_A16(0x0003);
+        call_jsl(0x01D368);
+        push_a16(y); push_a16(y);
+        push_a16(bus_read16(0x00, (uint16_t)(dp0 + 0xAA)));
+        push_a16(0x0001);
+        call_jsl_ret(0x00A097, 0x01EC78);
+        uint16_t slot = bus_wram_read16((uint16_t)(g_cpu.S + 1));
+        g_cpu.S = (uint16_t)(g_cpu.S + 2);
+        uint16_t x = (uint16_t)(slot << 2);
+        uint16_t hi = bus_read16(0x01, (uint16_t)(0xEC9F + x)), lo = bus_read16(0x01, (uint16_t)(0xECA1 + x));
+        push_a16(hi); push_a16(lo);
+        bus_wram_write16((uint16_t)(g_cpu.S - 1), 0x7E7E);  /* PEA $7E7E; PLB; PLB */
+        uint32_t src = ((uint32_t)(hi & 0xFF) << 16) | lo;
+        for (int i = 0x5FFE; i >= 0; i -= 2) {
+            uint32_t q = (src + (uint32_t)i) & 0xFFFFFF;
+            bus_write16(0x7E, (uint16_t)(0xA000 + i), bus_read16((uint8_t)(q >> 16), (uint16_t)q));
+        }
+        g_cpu.S = (uint16_t)(g_cpu.S + 4);
+        g_cpu.X = x; g_cpu.Y = 0xFFFE;
+        a = hi;
+    }
+    CPU_SET_A16(a);
+    g_cpu.S = s0; g_cpu.DP = dp0; g_cpu.DB = db0;
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x01EC4B, mp_01EC4B);
+
+    func_table_register(0x00B780, mp_00B780);
+    func_table_register(0x01EF36, mp_01EF36);
+    func_table_register(0x01F21D, mp_01F21D);
+
     func_table_register(0x00A097, mp_00A097);
     func_table_register(0x01EB81, mp_01EB81);
     func_table_register(0x01ECAF, mp_01ECAF);
