@@ -77,6 +77,11 @@ JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
                 "00CAD7", "00E7D9", "0096A1"]
 
 
+# Scenarios checked with the jump-entered handlers alone (see check_scenario).
+HANDLERS_ALONE = {"bars", "bars2", "bars3", "titlestates"}
+DISPATCHERS = {"008BEB", "009564", "009598", "0095E7", "018308"}
+
+
 def snaps(d):
     return {f: open(os.path.join(d, f), "rb").read() for f in sorted(os.listdir(d)) if f.endswith(".snap")}
 
@@ -90,6 +95,10 @@ def check_scenario(rom, name):
     executed = set(re.findall(r"^PROF (\w{6}) ", r.stderr, re.M))
     spec = ",".join([a + ("L" if k == "JSL" else "") for a, k in prof if a not in FRAME_DRIVERS] +
                     [a for a in JUMP_ENTERED if a not in dict(prof)])
+    if name in HANDLERS_ALONE:
+        # Only the jump-entered handlers: with their dispatcher also under
+        # check, a handler runs inside its call and is never checked itself.
+        spec = ",".join(a for a in JUMP_ENTERED if a not in DISPATCHERS)
     checked = os.path.join(OUT, name, "validated")
     r = canvas_tour.run(rom, pts, checked, real=True, extra_env={"MP_VALIDATE": spec,
                                                                  "SNESRECOMP_VALIDATE_MAX": "3000"})

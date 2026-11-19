@@ -120,8 +120,21 @@ SCENARIOS = {
     # the middle choice), swat a little, pause again and quit (lowest choice).
     "gnatpause": [MODE_BAR, (216, 212), (128, 112), (100, 100), (128, 112, "R"), (128, 112),
                   (150, 80), (128, 112, "R"), (128, 136), (128, 112), (60, 60)],
+    # Bottom-bar handlers the other scenarios reach only under their
+    # dispatcher ($95E7), where they cannot be checked on their own:
+    # conformance.py checks this one with the handlers alone. The canvas
+    # slot 152-167 ($995B), the size panel's slot 8-23 ($9A9E), the mode
+    # bar's slot 16-31 ($CAD7).
+    "bars": [(158, 212), ("wait", 60), (128, 112)],
+    "bars2": [(135, 212), (15, 212), ("wait", 60), (128, 112)],
+    "bars3": [MODE_BAR, (23, 212), ("wait", 120), (128, 112), ("wait", 60)],
+    # The title clicks again, checked with the title states alone (their
+    # dispatcher $01:8308 not under check).
+    "titlestates": None,
 }
 
+
+SCENARIOS["titlestates"] = SCENARIOS["title"]
 
 SRAM_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scratch", "sram", "saved.srm")
 
