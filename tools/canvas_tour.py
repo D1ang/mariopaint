@@ -8,7 +8,7 @@ ground truth to compare against.
   py tools/canvas_tour.py <rom> [--real] [--out DIR] [--scenario NAME] [x,y ...]
 
 With no points, clicks every bottom-bar slot. --scenario picks one of
-SCENARIOS (canvas, draw, stamps, coloring, music, animation, menu, view, gnat, gnatpause). Screens land in DIR (default
+SCENARIOS (canvas, draw, stamps, coloring, saveload, music, animation, menu, view, gnat, gnatpause). Screens land in DIR (default
 scratch/tour[_real]) as NN_x_y.png, plus a .snap (WRAM/VRAM/CGRAM) per shot.
 """
 import os, subprocess, sys, glob, shutil
@@ -55,6 +55,15 @@ SCENARIOS = {
     # fill on each, back out with the dog.
     "coloring": [MODE_BAR, (129, 212), (138, 164), (128, 112), (46, 212), (128, 112),
                  (72, 212), (128, 112), (96, 212), (128, 112), (119, 212), (128, 112), (223, 212)],
+    # The title screen: each logo letter starts its own little scene (the
+    # title states of $01:8308); a while to watch each, then Mario.
+    "title": ["notitle"] + [pt for x in (62, 86, 107, 118, 130, 144, 163, 174, 190, 203)
+                            for pt in ((x, 72), ("wait", 240))] + [(128, 168)],
+    # Save (the robot fills SRAM; START when it is done), then load it back.
+    "saveload": [(47, 212), ("drag", 40, 60, 200, 150), MODE_BAR, (129, 212), (138, 82), (128, 112),
+                 (128, 190), ("wait", 2700), (128, 190), (138, 123), (128, 112), (128, 190),
+                 ("wait", 2700), (128, 190), (128, 112), (235, 212), (23, 212), (128, 112),
+                 ("wait", 2700), (128, 190), (128, 112)],
     # Gnat Attack's pause menu (right button): resume (the cursor starts on
     # the middle choice), swat a little, pause again and quit (lowest choice).
     "gnatpause": [MODE_BAR, (216, 212), (128, 112), (100, 100), (128, 112, "R"), (128, 112),
@@ -62,10 +71,19 @@ SCENARIOS = {
 }
 
 
-def run(rom, points, out, real=False, extra_env=None):
-    script, shots = list(TITLE), []
-    f = CANVAS_AT
+def run(rom, points, out, real=False, extra_env=None, title=True):
+    """title=False skips the click through the title screen: the points then
+    act on the title itself (from frame 300)."""
+    if points and points[0] == "notitle":        # a scenario on the title screen itself
+        points, title = points[1:], False
+    script, shots = (list(TITLE) if title else []), []
+    f = CANVAS_AT if title else 300
     for pt in points:
+        if pt[0] == "wait":                      # ("wait", frames): hands off, then a shot
+            script.append(f"{f}:@128:@112:0:{pt[1]}")
+            f += pt[1]
+            shots.append(f - 5)
+            continue
         if pt[0] == "drag":                      # ("drag", x1, y1, x2, y2): a held stroke
             _, x1, y1, x2, y2 = pt
             script.append(f"{f}:@{x1}:@{y1}:0:30")
@@ -101,8 +119,10 @@ def run(rom, points, out, real=False, extra_env=None):
         f.write(r.stdout + r.stderr)
     pngs = sorted(glob.glob(os.path.join(out, "screenshot_*.png")))
     snaps = sorted(glob.glob(os.path.join(out, "s_f*.snap")))
+    points = [p for p in points if p != "notitle"]
     names = ["00_canvas"] + [
-        (f"{i + 1:02d}_drag_{p[1]}_{p[2]}_{p[3]}_{p[4]}" if p[0] == "drag" else
+        (f"{i + 1:02d}_wait_{p[1]}" if p[0] == "wait" else
+         f"{i + 1:02d}_drag_{p[1]}_{p[2]}_{p[3]}_{p[4]}" if p[0] == "drag" else
          f"{i + 1:02d}_{p[0]}_{p[1]}" + ("_" + p[2] if len(p) > 2 else ""))
         for i, p in enumerate(points)]
     for name, png, snap in zip(names, pngs, snaps):

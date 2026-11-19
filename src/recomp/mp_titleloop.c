@@ -27,26 +27,18 @@ extern bool g_quit;
  * ($04DC/$04DE), clamped to title screen bounds.
  * ======================================================================== */
 void mp_0182B1(void) {
-    /* X displacement: signed magnitude → two's complement */
-    uint8_t raw_dx = bus_wram_read8(0x04C6);
-    int16_t dx = raw_dx & 0x7F;
-    if (raw_dx & 0x80) dx = -dx;
-
-    int16_t cx = (int16_t)bus_wram_read16(0x04DC);
-    int16_t new_cx = cx + dx;
-    if (new_cx < 0x00E8 && new_cx >= 0x0018) {
-        bus_wram_write16(0x04DC, (uint16_t)new_cx);
-    }
-
-    /* Y displacement */
-    uint8_t raw_dy = bus_wram_read8(0x04C8);
-    int16_t dy = raw_dy & 0x7F;
-    if (raw_dy & 0x80) dy = -dy;
-
-    int16_t cy = (int16_t)bus_wram_read16(0x04DE);
-    int16_t new_cy = cy + dy;
-    if (new_cy < 0x00C0 && new_cy >= 0x0020) {
-        bus_wram_write16(0x04DE, (uint16_t)new_cy);
+    /* The mouse deltas $04C6/$04C8 (low byte, sign-extended) added to the
+     * title cursor $04DC/$04DE, kept only inside X $18..$E7 and Y $20..$BF.
+     * The bounds tests are the ROM's: the N flag of the comparison. */
+    static const uint16_t lim[2][2] = { { 0x00E8, 0x0018 }, { 0x00C0, 0x0020 } };
+    for (int i = 0; i < 2; i++) {
+        uint16_t d = bus_read16(0x00, (uint16_t)(0x04C6 + 2 * i)) & 0x00FF;
+        if (d & 0x0080) d |= 0xFF00;
+        uint16_t v = (uint16_t)(d + bus_read16(0x00, (uint16_t)(0x04DC + 2 * i)));
+        CPU_SET_A16(v);
+        if (!((uint16_t)(v - lim[i][0]) & 0x8000)) continue;      /* CMP #hi : BPL */
+        if ((uint16_t)(v - lim[i][1]) & 0x8000) continue;         /* CMP #lo : BMI */
+        bus_write16(0x00, (uint16_t)(0x04DC + 2 * i), v);
     }
 }
 
