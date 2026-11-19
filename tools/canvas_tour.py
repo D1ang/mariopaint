@@ -75,6 +75,13 @@ SCENARIOS = {
                    ("drag", 150, 40, 220, 90), (60, 150), ("drag", 40, 130, 100, 180), (180, 150),
                    ("drag", 150, 130, 220, 180), (232, 212), ("wait", 300), (36, 212), ("wait", 300),
                    (56, 212), ("wait", 300), (76, 212), ("wait", 300), (96, 212), ("wait", 300)],
+    # Gnat Attack through its waves: the gnat counts $7F:05A0..05A3 cleared
+    # again and again (each time the game ends a step; five steps a wave),
+    # up to the boss, game over and the restart.
+    "gnatwaves": [MODE_BAR, (216, 212), ("wait", 200), (128, 112), ("wait", 200)] + [
+        pt for _ in range(16)
+        for pt in (("poke", "7F05A0=00"), ("poke", "7F05A1=00"), ("poke", "7F05A2=00"),
+                   ("poke", "7F05A3=00"), ("wait", 240))],
     # Save (the robot fills SRAM; START when it is done), then load it back.
     "saveload": [(47, 212), ("drag", 40, 60, 200, 150), MODE_BAR, (129, 212), (138, 82), (128, 112),
                  (128, 190), ("wait", 2700), (128, 190), (138, 123), (128, 112), (128, 190),
@@ -93,8 +100,12 @@ def run(rom, points, out, real=False, extra_env=None, title=True):
     if points and points[0] == "notitle":        # a scenario on the title screen itself
         points, title = points[1:], False
     script, shots = (list(TITLE) if title else []), []
+    pokes = []
     f = CANVAS_AT if title else 300
     for pt in points:
+        if pt[0] == "poke":                      # ("poke", "BBAAAA=VV"): set a byte now, no shot
+            pokes.append(f"{f}:{pt[1]}")
+            continue
         if pt[0] == "wait":                      # ("wait", frames): hands off, then a shot
             script.append(f"{f}:@128:@112:0:{pt[1]}")
             f += pt[1]
@@ -126,6 +137,8 @@ def run(rom, points, out, real=False, extra_env=None, title=True):
                SNESRECOMP_SHOT_FRAMES=",".join(map(str, [CANVAS_AT - 5] + shots)),
                SNESRECOMP_EXIT_FRAME=str(f + 5),
                SNESRECOMP_DUMP_PREFIX="s")
+    if pokes:
+        env["SNESRECOMP_POKE"] = " ".join(pokes)
     if real:
         env["MP_REALFRAME"] = "1"
     env.update(extra_env or {})
@@ -135,7 +148,7 @@ def run(rom, points, out, real=False, extra_env=None, title=True):
         f.write(r.stdout + r.stderr)
     pngs = sorted(glob.glob(os.path.join(out, "screenshot_*.png")))
     snaps = sorted(glob.glob(os.path.join(out, "s_f*.snap")))
-    points = [p for p in points if p != "notitle"]
+    points = [p for p in points if p != "notitle" and p[0] != "poke"]
     names = ["00_canvas"] + [
         (f"{i + 1:02d}_wait_{p[1]}" if p[0] == "wait" else
          f"{i + 1:02d}_drag_{p[1]}_{p[2]}_{p[3]}_{p[4]}" if p[0] == "drag" else
