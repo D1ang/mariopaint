@@ -82,28 +82,28 @@ static void vram_dma(uint16_t vram_addr, uint8_t bank, uint16_t addr, uint16_t s
  * $1982 = 1 if checksum matches (valid save), 0 if not.
  * ======================================================================== */
 void mp_00D6D3(void) {
-    /* For now, mark SRAM as invalid (no save data) */
-    bus_wram_write16(0x1982, 0x0000);
-
-    /* Compute the actual checksum if SRAM has data */
-    uint16_t sum = 0x7003;
-    uint16_t xor_val = 0x2122;
-
+    /* The save check: a sum (with the carry running on from one add to the
+     * next: one CLC before the loop, as in the ROM) and an XOR over SRAM
+     * $70:0800..$77FF and the word at $70:07FE, from seeds $7003 / $2122,
+     * against the stored pair at $70:07C2/$07C4. $1982 = 1 when they match. */
+    bus_write16(0x00, 0x1982, 0x0000);
+    uint32_t c = 0;
+    uint16_t sum = 0x7003, xr = 0x2122;
     for (int x = 0x77FE; x >= 0; x -= 2) {
-        uint16_t val = bus_read16(0x70, 0x0800 + x);
-        sum += val;
-        xor_val ^= val;
+        uint16_t v = bus_read16(0x70, (uint16_t)(0x0800 + x));
+        uint32_t t = (uint32_t)v + sum + c;
+        sum = (uint16_t)t; c = t >> 16;
+        xr ^= v;
     }
-    sum += bus_read16(0x70, 0x07FE);
-    xor_val ^= bus_read16(0x70, 0x07FE);
-
-    bus_wram_write16(0x197C, sum);
-    bus_wram_write16(0x197E, xor_val);
-
-    /* Check against stored checksums */
-    if (bus_read16(0x70, 0x07C2) == sum &&
-        bus_read16(0x70, 0x07C4) == xor_val) {
-        bus_wram_write16(0x1982, 0x0001);
+    uint16_t v = bus_read16(0x70, 0x07FE);
+    sum = (uint16_t)((uint32_t)sum + v + c);
+    xr ^= v;
+    bus_write16(0x00, 0x197C, sum);
+    bus_write16(0x00, 0x197E, xr);
+    CPU_SET_A16(bus_read16(0x70, 0x07C2));
+    if (bus_read16(0x70, 0x07C2) == sum && bus_read16(0x70, 0x07C4) == xr) {
+        bus_write16(0x00, 0x1982, 0x0001);
+        CPU_SET_A16(0x0001);
     }
 }
 

@@ -937,7 +937,178 @@ void mp_01904A(void) {
 #undef SETARG
 }
 
+/* ---- The copy tool's buffer work (bank $01, DP = the canvas DP) -------
+ * $7F:0000/0002 width/height-1 of the copied area, $7F:0004/0006 its left
+ * and right pixel offsets in their 8-pixel columns, $7F:0008.. the copied
+ * 2bpp tile rows ($80 bytes per row of columns). DP $0A/$0D are long
+ * pointers into the canvas tile buffer (planes 0-1 and 2-3). */
+#define CR(o)    bus_read16(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define CW(o, v) bus_write16(0x00, (uint16_t)(g_cpu.DP + (o)), (uint16_t)(v))
+#define K16(o)   bus_read16(0x7F, (uint16_t)(o))
+#define KW16(o, v) bus_write16(0x7F, (uint16_t)(o), (uint16_t)(v))
+
+static uint32_t dp_long(uint16_t o) {
+    uint16_t a = (uint16_t)(g_cpu.DP + o);
+    return bus_read16(0x00, a) | ((uint32_t)bus_read8(0x00, (uint16_t)(a + 2)) << 16);
+}
+static uint16_t long_r16(uint32_t a) { return bus_read16((uint8_t)(a >> 16), (uint16_t)a); }
+static void long_w16(uint32_t a, uint16_t v) { bus_write16((uint8_t)(a >> 16), (uint16_t)a, v); }
+
+/* $01:D9A9: the tile-buffer offset $84 of the canvas pixel ($80, $82). */
+void mp_01D9A9(void) {
+    uint16_t v = (uint16_t)((CR(0x80) & 0x00F8) << 2);
+    v = (uint16_t)(v + ((CR(0x82) & 0x00F8) << 7));
+    v = (uint16_t)(v + ((CR(0x82) & 0x0007) << 1));
+    v = (uint16_t)(v - 0x0800);
+    CW(0x84, v);
+    CPU_SET_A16(v);
+}
+
+/* $01:D7F0: one row of the area ($C2 + 1 columns) from the canvas at $84
+ * into the copy buffer at $7F:0008 + X. X and Y are kept. */
+void mp_01D7F0(void) {
+    uint16_t x = g_cpu.X, y0 = g_cpu.Y;
+    uint32_t base = dp_long(0x0A);
+    CW(0xC0, CR(0xC2));
+    uint16_t y = CR(0x84), xx = x;
+    do {
+        KW16(0x0008 + xx, long_r16(base + y));
+        y = (uint16_t)(y + 0x10);
+        xx = (uint16_t)(xx + 2);
+        CW(0xC0, CR(0xC0) - 1);
+    } while (!(CR(0xC0) & 0x8000));
+    g_cpu.X = x; g_cpu.Y = y0;
+}
+
+/* $01:D8CE: the copied pixel (both plane pairs, each expanded to a full
+ * byte mask in $C6 / $00:00C8) for target column $C0, row $C4, read
+ * through the flip/turn mode $0997 (0-7). X and Y are kept. */
+void mp_01D8CE(void) {
+    uint16_t x0 = g_cpu.X, y0 = g_cpu.Y;
+    uint16_t c0 = CR(0xC0), c4 = CR(0xC4), w = K16(0x0000), h = K16(0x0002);
+    uint16_t col, row;
+    switch (bus_read16(g_cpu.DB, 0x0997) & 0x00FF) {
+    case 0: col = c0; row = c4; break;
+    case 1: col = (uint16_t)(w - c0); row = c4; break;
+    case 2: col = c0; row = (uint16_t)(h - c4); break;
+    case 3: col = (uint16_t)(w - c0); row = (uint16_t)(h - c4); break;
+    case 4: col = (uint16_t)(h - c4); row = c0; break;
+    case 5: col = c4; row = (uint16_t)(w - c0); break;
+    case 6: col = c4; row = c0; break;
+    default: col = (uint16_t)(h - c4); row = (uint16_t)(w - c0); break;
+    }
+    uint16_t t = (uint16_t)(col + K16(0x0004));                       /* $D8E7 */
+    uint16_t xi = (uint16_t)(((t & 0xFFF8) >> 1) + ((row & 0x00FF) << 7));
+    uint16_t m = bus_read16(0x01, (uint16_t)(0xD9D1 + ((t & 7) << 1)));
+    for (int k = 0; k < 2; k++) {
+        uint16_t a = (uint16_t)(K16(0x0008 + 2 * k + xi) & m);
+        if (a & 0x00FF) a |= 0x00FF;
+        if (a & 0xFF00) a |= 0xFF00;
+        if (k == 0) CW(0xC6, a); else bus_write16(0x00, 0x00C8, a);
+        CPU_SET_A16(a);
+    }
+    g_cpu.X = x0; g_cpu.Y = y0;
+}
+
+/* $01:D874: one row of the copy laid onto the canvas from $84 on: column
+ * $C0 from the left edge clip, while inside the canvas; each pixel merged
+ * into both plane pairs ([$0A], [$0D]) through the pixel mask $01:D9D1. */
+void mp_01D874(void) {
+    uint16_t v = (uint16_t)(bus_read16(g_cpu.DB, 0x19B6) - CR(0x22));
+    CW(0xC0, (v & 0x8000) ? 0 : v);
+    uint16_t y = CR(0x84);
+    uint32_t p0 = dp_long(0x0A), p1 = dp_long(0x0D);
+    for (;;) {
+        uint16_t a = (uint16_t)(CR(0x22) + CR(0xC0) - 1);
+        if (a >= bus_read16(g_cpu.DB, 0x19B8)) break;
+        uint16_t x = (uint16_t)((((uint16_t)(a + 1)) & 0x0007) << 1);
+        g_cpu.X = x; g_cpu.Y = y;
+        mp_01D8CE();
+        if ((CR(0xC6) | CR(0xC8)) != 0) {
+            uint16_t m = bus_read16(0x01, (uint16_t)(0xD9D1 + x));
+            uint16_t d = long_r16(p0 + y);
+            long_w16(p0 + y, (uint16_t)(((CR(0xC6) ^ d) & m) ^ d));
+            d = long_r16(p1 + y);
+            long_w16(p1 + y, (uint16_t)(((CR(0xC8) ^ d) & m) ^ d));
+        }
+        if (x == 0x000E) y = (uint16_t)(y + 0x0020);
+        CW(0xC0, CR(0xC0) + 1);
+        if (CR(0xC0) > K16(0x0000)) break;
+    }
+    g_cpu.Y = y;
+}
+
+/* $01:D75B (JSL): copy the selected area ($22,$24)-($26,$28) from the
+ * canvas into the copy buffer; for the turned modes ($0997 >= 4) width and
+ * height swap and the far corner moves with them. */
+void mp_01D75B(void) {
+    KW16(0x0000, CR(0x26) - CR(0x22));
+    KW16(0x0002, CR(0x28) - CR(0x24));
+    KW16(0x0004, CR(0x22) & 0x0007);
+    KW16(0x0006, CR(0x26) & 0x0007);
+    CW(0xC2, (uint16_t)((((uint16_t)((CR(0x26) & 0xFFF8) - (CR(0x22) & 0xFFF8))) >> 2) + 1));
+    CW(0x80, CR(0x22));
+    CW(0x82, CR(0x24));
+    call_jsr(0x01D9A9);
+    uint16_t x = 0, y = K16(0x0002);
+    for (;;) {
+        g_cpu.X = x; g_cpu.Y = y;
+        call_jsr(0x01D7F0);
+        uint16_t o = (uint16_t)(CR(0x84) + 2);
+        if (!(o & 0x000F)) o = (uint16_t)(o + 0x03F0);
+        CW(0x84, o);
+        x = (uint16_t)(x + 0x0080);
+        y = (uint16_t)(y - 1);
+        if (y & 0x8000) break;
+    }
+    g_cpu.X = x; g_cpu.Y = y;
+    if (bus_read16(g_cpu.DB, 0x0997) >= 0x0004) {
+        uint16_t w = K16(0x0000);
+        KW16(0x0000, K16(0x0002));
+        KW16(0x0002, w);
+        CW(0x26, CR(0x22) + K16(0x0000));
+        CW(0x28, CR(0x24) + K16(0x0002));
+    }
+}
+
+/* $01:D810 (JSL): lay the copy down at ($22,$24), clipped to the canvas,
+ * row by row ($D874) until its height or the canvas bottom. */
+void mp_01D810(void) {
+    uint8_t db = g_cpu.DB;
+    CW(0x0D, CR(0x0A) + 0x0010);
+    uint16_t a = CR(0x22);
+    if ((uint16_t)(a - bus_read16(db, 0x19B6)) & 0x8000) a = bus_read16(db, 0x19B6);
+    CW(0x80, a);
+    a = CR(0x24);
+    if ((uint16_t)(a - bus_read16(db, 0x19BA)) & 0x8000) a = (uint16_t)(bus_read16(db, 0x19BA) + 1);
+    CW(0x82, a);
+    call_jsr(0x01D9A9);
+    uint16_t v = (uint16_t)(bus_read16(db, 0x19BA) - CR(0x24));
+    CW(0xC4, (v & 0x8000) ? 0 : (uint16_t)(v + 1));
+    for (;;) {
+        call_jsr(0x01D874);
+        uint16_t o = (uint16_t)(CR(0x84) + 2);
+        if (!(o & 0x000F)) o = (uint16_t)(o + 0x03F0);
+        CW(0x84, o);
+        if (o >= 0x6000) break;
+        if ((uint16_t)(CR(0xC4) + CR(0x24) - 1) >= bus_read16(db, 0x19BC)) break;
+        CW(0xC4, CR(0xC4) + 1);
+        if (CR(0xC4) > K16(0x0002)) break;
+    }
+}
+#undef CR
+#undef CW
+#undef K16
+#undef KW16
+
 void mp_register_misc(void) {
+    func_table_register(0x01D9A9, mp_01D9A9);
+    func_table_register(0x01D7F0, mp_01D7F0);
+    func_table_register(0x01D8CE, mp_01D8CE);
+    func_table_register(0x01D874, mp_01D874);
+    func_table_register(0x01D75B, mp_01D75B);
+    func_table_register(0x01D810, mp_01D810);
+
     func_table_register(0x00C490, mp_00C490);
     func_table_register(0x008994, mp_008994);
     func_table_register(0x00C6C6, mp_00C6C6);

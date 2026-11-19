@@ -82,6 +82,12 @@ SCENARIOS = {
         pt for _ in range(16)
         for pt in (("poke", "7F05A0=00"), ("poke", "7F05A1=00"), ("poke", "7F05A2=00"),
                    ("poke", "7F05A3=00"), ("wait", 240))],
+    # The real stamp tool (bottom bar 168-183), its page arrows (16-31), then
+    # the stamp row (184-199): each stamp of the top row picked and placed.
+    "stamps2": [(175, 212), (100, 100), (23, 212), (150, 100), (23, 212), (60, 160), (23, 212),
+                (200, 160), (192, 212)] + [
+        pt for i, x in enumerate(range(12, 240, 32))
+        for pt in ((x, 8), (40 + i * 16, 60 + (i % 4) * 30))],
     # Save (the robot fills SRAM; START when it is done), then load it back.
     "saveload": [(47, 212), ("drag", 40, 60, 200, 150), MODE_BAR, (129, 212), (138, 82), (128, 112),
                  (128, 190), ("wait", 2700), (128, 190), (138, 123), (128, 112), (128, 190),

@@ -349,49 +349,106 @@ void mp_009DAB(void) {
     }
 }
 
-/* ========================================================================
- * $00:9DFB — Stamp tool handler
- *
- * Initiates stamp placement at the cursor position.
- * Sets up stamp boundaries and draws the stamp.
- * ======================================================================== */
+/* $00:9DFB: the copy tool (rectangle select, then drag the copy).
+ * DP $20 is its state: 0 first press (the corner at the cursor, or the
+ * whole canvas when $19C0), 1 dragging the other corner, 2 release
+ * (corners sorted, the area kept by $01:D75B), 3 moving the copy (the
+ * rectangle follows the cursor, clamped to the canvas $19B6..$19BC; a
+ * click lays it down via $01:D810). The frame is drawn by $ADFB. */
+static bool neg16(uint16_t a, uint16_t b) { return ((uint16_t)(a - b) & 0x8000) != 0; }
+
 void mp_009DFB(void) {
-    bus_wram_write16(0x1996, 0x0000);
-
-    /* Set up stamp bounds from canvas bounds with offsets */
-    bus_wram_write16(0x19B6, bus_wram_read16(0x19AE) + 4);
-    bus_wram_write16(0x19B8, bus_wram_read16(0x19B0) + 3);
-    bus_wram_write16(0x19BA, bus_wram_read16(0x19B2) - 1);
-    bus_wram_write16(0x19BC, bus_wram_read16(0x19B4) - 2);
-
-    uint8_t draw = bus_wram_read8(0x0020);
-    if (draw == 0) {
-        /* First click: start stamp placement */
-        op_lda_imm16(0x0026);
-        func_table_call(0x01D368);
-
-        bus_wram_write16(0x053B, 0x0004);
-        bus_wram_write16(0x053D, 0x0000);
-        bus_wram_write16(0x053F, 0x0003);
-        bus_wram_write16(0x1998, 0x0000);
-        bus_wram_write16(0x199A, 0x0000);
-
-        uint16_t mode19c0 = bus_wram_read16(0x19C0);
-        if (mode19c0 == 0) {
-            /* Normal stamp — save cursor as start position */
-            bus_wram_write16(0x0022, bus_wram_read16(0x04DC));
-            bus_wram_write16(0x0026, bus_wram_read16(0x04DC));
-            bus_wram_write16(0x0024, bus_wram_read16(0x04DE));
-            bus_wram_write16(0x0028, bus_wram_read16(0x04DE));
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+#define R16(o)   bus_read16(db, (uint16_t)(o))
+#define W16(o,v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+#define DR(o)    bus_read16(0x00, (uint16_t)(dp + (o)))
+#define DW(o,v)  bus_write16(0x00, (uint16_t)(dp + (o)), (uint16_t)(v))
+    W16(0x1996, 0);
+    W16(0x19B6, R16(0x19AE) + 4);
+    W16(0x19B8, R16(0x19B0) + 3);
+    W16(0x19BA, R16(0x19B2) - 1);
+    W16(0x19BC, R16(0x19B4) - 2);
+    uint16_t st = DR(0x20);
+    if (st == 0) {
+        CPU_SET_A16(0x0026); call_jsl(0x01D368);
+        W16(0x053B, 0x0004); W16(0x053D, 0); W16(0x053F, 0x0003);
+        W16(0x1998, 0); W16(0x199A, 0);
+        if (R16(0x19C0) == 0) {
+            DW(0x22, R16(0x04DC)); DW(0x26, R16(0x04DC));
+            DW(0x24, R16(0x04DE)); DW(0x28, R16(0x04DE));
         } else {
-            /* Constrained stamp — use bounds */
-            bus_wram_write16(0x0022, bus_wram_read16(0x19B6));
-            bus_wram_write16(0x0024, bus_wram_read16(0x19B8));
+            DW(0x22, R16(0x19B6)); DW(0x26, R16(0x19B8));
+            DW(0x24, R16(0x19BA) + 1); DW(0x28, R16(0x19BC) + 1);
+            g_cpu.Y = 0x0002; DW(0x20, 0x0002);
+            return;
         }
+    } else if (st < 0x0002) {
+        W16(0x1998, 0); W16(0x199A, 0x0001);
+        DW(0x26, R16(0x04DC)); DW(0x28, R16(0x04DE));
+        call_jsr(0x00ADFB);
+    } else if (st != 0x0003) {
+        W16(0x053B, 0);
+        CPU_SET_A16(0x0027); call_jsl(0x01D368);
+        uint16_t a = DR(0x22), x = DR(0x26);
+        if (a >= x) { DW(0x22, x); DW(0x26, a); }
+        a = DR(0x24); x = DR(0x28);
+        if (a >= x) { DW(0x24, x); DW(0x28, a); }
+        call_jsl(0x01D75B);
+        if (R16(0x19C0) == 0) {
+            uint16_t cx = (uint16_t)((uint16_t)(DR(0x22) + DR(0x26)) >> 1);
+            W16(0x04DC, cx); W16(0x099B, cx);
+            uint16_t cy = (uint16_t)((uint16_t)(DR(0x24) + DR(0x28)) >> 1);
+            W16(0x04DE, cy); W16(0x099D, cy);
+        }
+        DW(0x20, DR(0x20) + 1);
+        return;
+    } else {
+        if (R16(0x04CA) & 0x0020) {                          /* $9F50: lay it down */
+            if (R16(0x19C0)) { DW(0x22, R16(0x19B6)); DW(0x24, R16(0x19BA) + 1); }
+            call_jsr(0x008B03);
+            CPU_SET_A16(0x0028); call_jsl(0x01D368);
+            W16(0x053B, 0x0004); W16(0x053D, 0); W16(0x053F, 0x0003);
+            W16(0x09A7, R16(0x09A7) + 1);
+            call_jsl(0x01D810);
+            W16(0x053B, 0); W16(0x09A7, 0);
+            return;
+        }
+        W16(0x1996, R16(0x1996) + 1);
+        if (R16(0x19C0) != 0) return;
+        uint16_t dx = (uint16_t)(R16(0x04DC) - R16(0x099B));
+        DW(0x22, DR(0x22) + dx); DW(0x26, DR(0x26) + dx);
+        uint16_t dy = (uint16_t)(R16(0x04DE) - R16(0x099D));
+        DW(0x24, DR(0x24) + dy); DW(0x28, DR(0x28) + dy);
+        /* $9F87 on copies of $22 $26 $24 $28: kept inside the canvas */
+        uint16_t l = DR(0x22), r = DR(0x26), t = DR(0x24), btm = DR(0x28);
+        uint16_t v = R16(0x19B6);
+        if (!neg16(v, l)) l = v;
+        if (!neg16(v, r)) r = v;
+        v = R16(0x19B8);
+        if (neg16(v, l)) l = v;
+        if (neg16(v, r)) r = v;
+        v = R16(0x19BA);
+        if (!neg16(v, t)) t = v;
+        if (!neg16(v, btm)) btm = v;
+        v = R16(0x19BC);
+        if (neg16(v, t)) t = v;
+        if (neg16(v, btm)) btm = v;
+        uint16_t cx = (uint16_t)((uint16_t)(l + r) >> 1);
+        W16(0x04DC, cx); W16(0x099B, cx);
+        uint16_t cy = (uint16_t)((uint16_t)(t + btm) >> 1);
+        W16(0x04DE, cy); W16(0x099D, cy);
+        tail_jmp(0x00ADFB);
+        return;
     }
-
-    /* Continue stamp logic via sub-routines */
-    func_table_call(0x009E76);
+    uint16_t y = 0x0002;                                      /* $9E91 */
+    if (R16(0x04CA) & 0x0010) y--;
+    g_cpu.Y = y;
+    DW(0x20, y);
+#undef R16
+#undef W16
+#undef DR
+#undef DW
 }
 
 /* ========================================================================

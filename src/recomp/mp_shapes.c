@@ -250,17 +250,109 @@ void mp_00AF5A(void) {
     }
 }
 
-/* ========================================================================
- * $00:ADFB — Stamp preview drawing
- *
- * Draws a preview of the stamp at the current cursor position.
- * ======================================================================== */
+/* $00:AF2C: clear sprite X's size/high-X bits in the OAM high table
+ * ($0426.., masks at $AF4A). X and A as the ROM leaves them. */
+static void oam_hi_clear(uint16_t x) {
+    uint8_t db = g_cpu.DB;
+    uint16_t n = (uint16_t)(x >> 2);
+    uint16_t o = (uint16_t)(0x0426 + ((n >> 2) & 0xFFFE));
+    uint16_t m = bus_read16(db, (uint16_t)(0xAF4A + ((n & 7) << 1)));
+    bus_write16(db, o, (uint16_t)(bus_read16(db, o) & m));
+    CPU_SET_A16(n);
+}
+void mp_00AF2C(void) { uint16_t x = g_cpu.X; oam_hi_clear(x); g_cpu.X = x; }
+
+/* $00:ADFB: the copy tool's dashed frame as sprites: the corners $22/$26,
+ * $24/$28 sorted into $2A..$30, kept inside the canvas $19B6..$19BC, then
+ * the top and bottom edges in pieces of 8, 4, 2, 1 pixels (tiles $6B down)
+ * and the left and right edges the same way (tiles $7B down), from OAM
+ * slot $0446 on. */
 void mp_00ADFB(void) {
-    /* Stamp preview — reads stamp tile data and renders it.
-     * For now, dispatch to the original location. */
-    bus_wram_write16(0x0086, bus_wram_read16(0x0026));
-    bus_wram_write16(0x0088, bus_wram_read16(0x0028));
-    mp_00B051();
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+#define R16(o)   bus_read16(db, (uint16_t)(o))
+#define W16(o,v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+#define DR(o)    bus_read16(0x00, (uint16_t)(dp + (o)))
+#define DW(o,v)  bus_write16(0x00, (uint16_t)(dp + (o)), (uint16_t)(v))
+#define NEG(a,b) ((((uint16_t)((a) - (b))) & 0x8000) != 0)
+#define XBA(v)   ((uint16_t)(((v) << 8) | ((v) >> 8)))
+    uint16_t a = DR(0x22), x = DR(0x26);
+    if (NEG(a, x)) { DW(0x2A, a); DW(0x2E, x); } else { DW(0x2A, x); DW(0x2E, a); }
+    a = DR(0x24); x = DR(0x28);
+    if (NEG(a, x)) { DW(0x2C, a); DW(0x30, x); } else { DW(0x2C, x); DW(0x30, a); }
+    DW(0x2C, DR(0x2C) - 1);
+    DW(0x30, DR(0x30) - 1);
+    uint16_t v = R16(0x19B6);
+    if (!NEG(v, DR(0x2A))) DW(0x2A, v);
+    if (!NEG(v, DR(0x2E))) DW(0x2E, v);
+    v = R16(0x19B8);
+    if (NEG(v, DR(0x2A))) DW(0x2A, v);
+    if (NEG(v, DR(0x2E))) DW(0x2E, v);
+    v = R16(0x19BA);
+    if (!NEG(v, DR(0x2C))) DW(0x2C, v);
+    if (!NEG(v, DR(0x30))) DW(0x30, v);
+    v = R16(0x19BC);
+    if (NEG(v, DR(0x2C))) DW(0x2C, v);
+    if (NEG(v, DR(0x30))) DW(0x30, v);
+    DW(0x32, DR(0x2E) - DR(0x2A) + 1);
+    DW(0x34, DR(0x30) - DR(0x2C) + 1);
+    DW(0x2C, XBA(DR(0x2C)));
+    DW(0x30, XBA(DR(0x30)));
+    DW(0x36, DR(0x2A));
+    DW(0x38, 0x0008);
+    DW(0x3A, 0xA06B);
+    DW(0x3C, 0x206B);
+    uint16_t ox = R16(0x0446);
+    for (;;) {                                               /* $AE89: top and bottom */
+        if (DR(0x32) < DR(0x38)) {
+            DW(0x3C, DR(0x3C) - 1);
+            DW(0x3A, DR(0x3A) - 1);
+            DW(0x38, DR(0x38) >> 1);
+            if (DR(0x38) == 0) break;
+            continue;
+        }
+        DW(0x32, DR(0x32) - DR(0x38));
+        W16(0x0226 + ox, (uint16_t)(((uint16_t)(DR(0x2C) - 0x0700) & 0xFF00) | DR(0x36)));
+        W16(0x0228 + ox, DR(0x3A));
+        oam_hi_clear(ox);
+        ox = (uint16_t)(ox + 4);
+        if (DR(0x34) != 0x0001) {
+            W16(0x0226 + ox, (uint16_t)(DR(0x30) | DR(0x36)));
+            W16(0x0228 + ox, DR(0x3C));
+            oam_hi_clear(ox);
+            ox = (uint16_t)(ox + 4);
+        }
+        DW(0x36, DR(0x38) + DR(0x36));
+    }
+    DW(0x36, DR(0x2C));                                      /* $AED9: left and right */
+    DW(0x38, 0x0008);
+    DW(0x3A, 0x207B);
+    for (;;) {
+        if (DR(0x34) < DR(0x38)) {
+            DW(0x3A, DR(0x3A) - 1);
+            DW(0x38, DR(0x38) >> 1);
+            if (DR(0x38) == 0) break;
+            continue;
+        }
+        DW(0x34, DR(0x34) - DR(0x38));
+        W16(0x0226 + ox, (uint16_t)(DR(0x36) | DR(0x2A)));
+        W16(0x0228 + ox, DR(0x3A));
+        oam_hi_clear(ox);
+        ox = (uint16_t)(ox + 4);
+        W16(0x0226 + ox, (uint16_t)(DR(0x36) | DR(0x2E)));
+        W16(0x0228 + ox, DR(0x3A));
+        oam_hi_clear(ox);
+        ox = (uint16_t)(ox + 4);
+        DW(0x36, (uint16_t)(XBA(DR(0x38)) + DR(0x36)));
+    }
+    W16(0x0446, ox);
+    g_cpu.X = ox;
+#undef R16
+#undef W16
+#undef DR
+#undef DW
+#undef NEG
+#undef XBA
 }
 
 /* ========================================================================
@@ -782,16 +874,6 @@ void mp_018D35(void) {
 }
 
 /* ========================================================================
- * $01:D75B — Stamp tile DMA
- *
- * Queues DMA for stamp tile graphics.
- * ======================================================================== */
-void mp_01D75B(void) {
-    /* Queue DMA transfer for stamp graphics to VRAM */
-    func_table_call(0x01D75B);  /* Self-dispatch for complex logic */
-}
-
-/* ========================================================================
  * Register all shape and remaining functions.
  * ======================================================================== */
 void mp_register_shapes(void) {
@@ -804,6 +886,7 @@ void mp_register_shapes(void) {
     func_table_register(0x00B32D, mp_00B32D);
     func_table_register(0x00B610, mp_00B610);
     func_table_register(0x00B7D6, mp_00B7D6);
+    func_table_register(0x00AF2C, mp_00AF2C);
     func_table_register(0x00B910, mp_00B910);
     func_table_register(0x00B926, mp_00B926);
     func_table_register(0x009C1B, mp_009C1B);
