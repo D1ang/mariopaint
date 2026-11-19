@@ -1,18 +1,18 @@
 # ROM catalogue
 
 What the tours read from the ROM (tools/rom_catalog.py over the
-SNESRECOMP_ROMLOG logs of 12 scenario runs on the genuine ROM).
+SNESRECOMP_ROMLOG logs of 14 scenario runs on the genuine ROM).
 Addresses and sizes only; the full region list is in
 scratch/romlog/catalog.json.
 
 | kind | bytes | share |
 |---|---:|---:|
-| apu | 192004 | 18.3% |
-| data | 133853 | 12.8% |
-| vram | 102080 | 9.7% |
-| code | 25824 | 2.5% |
+| apu | 228182 | 21.8% |
+| data | 137094 | 13.1% |
+| vram | 103104 | 9.8% |
+| code | 26606 | 2.5% |
 | cgram | 1024 | 0.1% |
-| (not reached by the tours) | 593791 | 56.6% |
+| (not reached by the tours) | 552566 | 52.7% |
 
 ## Asset regions (DMA targets and CPU-read data)
 
@@ -22,9 +22,10 @@ scratch/romlog/catalog.json.
 | 008D5C | 000D5C | 60 | data | 008D2C |
 | 008E89 | 000E89 | 108 | data | 008E0B |
 | 008F3D | 000F3D | 40 | data | 008E0B |
+| 008F99 | 000F99 | 32 | data | 008E0B |
 | 0092AC | 0012AC | 28 | data | 009001 |
 | 0094E6 | 0014E6 | 16 | data | 009378 |
-| 009508 | 001508 | 19 | data | 009378 |
+| 0094FE | 0014FE | 29 | data | 009378 |
 | 00953C | 00153C | 18 | data | 009378 |
 | 00A10D | 00210D | 20 | data | 00A0B3 |
 | 00A15D | 00215D | 16 | data | 00A0B3 |
@@ -61,7 +62,10 @@ scratch/romlog/catalog.json.
 | 01DC53 | 00DC53 | 38 | data | 00A25B |
 | 01DCA3 | 00DCA3 | 22 | data | 00A25B |
 | 01E0F3 | 00E0F3 | 16 | data | 01E09B |
-| 01EA15 | 00EA15 | 48 | data | 01E998 |
+| 01E97A | 00E97A | 30 | data | 01E8F6 |
+| 01EA15 | 00EA15 | 96 | data | 01E998 |
+| 01EAA5 | 00EAA5 | 48 | data | 01E998 |
+| 01EB05 | 00EB05 | 48 | data | 01E998 |
 | 01EB65 | 00EB65 | 28 | data | 01E998 |
 | 01EC9F | 00EC9F | 16 | data | 01EC4B |
 | 028000 | 010000 | 1408 | data | 00C414 |
@@ -84,9 +88,12 @@ scratch/romlog/catalog.json.
 | 02C340 | 014340 | 18 | data | 00FD83 |
 | 02C380 | 014380 | 18 | data | 00FD83 |
 | 02C3C0 | 0143C0 | 18 | data | 00FD83 |
+| 02C3E0 | 0143E0 | 16 | data | 00FE21 |
 | 02C400 | 014400 | 18 | data | 00FD83 |
+| 02C420 | 014420 | 16 | data | 00FE21 |
 | 02C440 | 014440 | 18 | data | 00FD83 |
 | 02C480 | 014480 | 640 | data | 018D35 |
+| 02F310 | 017310 | 1776 | data | 01E8F6 |
 | 02FC00 | 017C00 | 1024 | cgram | 0000 |
 | 038000 | 018000 | 4608 | vram | 7400 |
 | 039200 | 019200 | 3200 | data | 00A25B |
@@ -127,8 +134,7 @@ scratch/romlog/catalog.json.
 | 07F000 | 03F000 | 20480 | vram | 7000 |
 | 08D7A0 | 0457A0 | 96 | vram | 5A40 |
 | 08D9A0 | 0459A0 | 96 | vram | 5B40 |
-| 08E000 | 046000 | 2560 | vram | 4200 |
-| 08EE00 | 046E00 | 1024 | vram | 5600 |
+| 08E000 | 046000 | 4608 | vram | 4200 |
 | 098000 | 048000 | 32768 | vram | 4000 |
 | 0A8000 | 050000 | 128 | data | 00B66C |
 | 0A80C0 | 0500C0 | 64 | data | 00B66C |
@@ -154,6 +160,7 @@ scratch/romlog/catalog.json.
 | 0DB116 | 06B116 | 16 | data | 01F91E |
 | 0DB19C | 06B19C | 56 | data | 01F91E |
 | 0DB1DC | 06B1DC | 24 | data | 01FA68 |
+| 0DB31A | 06B31A | 16 | data | 01FA68 |
 | 0DB67D | 06B67D | 85 | data | 01F91E |
 | 0DCC56 | 06CC56 | 85 | data | 01F91E |
 | 0DCD17 | 06CD17 | 279 | data | 01F91E |
@@ -164,17 +171,18 @@ scratch/romlog/catalog.json.
 | 0DD4F1 | 06D4F1 | 121 | data | 01F91E |
 | 0DD829 | 06D829 | 120 | data | 01F91E |
 | 0DDAB4 | 06DAB4 | 27 | data | 01F91E |
-| 0DDACF | 06DACF | 48 | data | 01FA68 |
+| 0DDACF | 06DACF | 72 | data | 01FA68 |
 | 0DDBA4 | 06DBA4 | 34 | data | 01F91E |
 | 0DDBC6 | 06DBC6 | 17 | data | 01FA68 |
 | 0DDBD7 | 06DBD7 | 17 | data | 01F91E |
 | 0DDBF9 | 06DBF9 | 17 | data | 01FA68 |
 | 0DE2C6 | 06E2C6 | 66 | data | 01F91E |
+| 0DE38E | 06E38E | 56 | data | 01FA68 |
 | 0DE42B | 06E42B | 28 | data | 01F91E |
 | 0DE50B | 06E50B | 236 | data | 01F91E |
 | 0DE64F | 06E64F | 164 | data | 01FA68 |
 | 0DE79B | 06E79B | 46 | data | 01F91E |
-| 0DE7C9 | 06E7C9 | 127 | data | 01FA68 |
+| 0DE7C9 | 06E7C9 | 857 | data | 01FA68 |
 | 0DEB72 | 06EB72 | 128 | data | 01F825 |
 | 0DEBFA | 06EBFA | 88 | data | 01F825 |
 | 0DEDA6 | 06EDA6 | 32 | data | 01F84F |
@@ -193,6 +201,7 @@ scratch/romlog/catalog.json.
 | 0EA000 | 072000 | 24576 | data | 01EC4B |
 | 0F8006 | 078006 | 20 | data | 01962C |
 | 0F8114 | 078114 | 62 | data | 01962C |
+| 0F81A4 | 0781A4 | 30 | data | 01962C |
 | 0F826C | 07826C | 50 | data | 01962C |
 | 0F832C | 07832C | 26 | data | 01962C |
 | 0F8374 | 078374 | 26 | data | 01962C |
@@ -205,9 +214,12 @@ scratch/romlog/catalog.json.
 | 0F86C0 | 0786C0 | 26 | data | 01962C |
 | 0F86E4 | 0786E4 | 26 | data | 01962C |
 | 0F8708 | 078708 | 18 | data | 01962C |
+| 0F9704 | 079704 | 130 | data | 01962C |
+| 0F9A2C | 079A2C | 18 | data | 01962C |
 | 13A000 | 09A000 | 24576 | data | 01EC4B |
 | 14A000 | 0A2000 | 24576 | data | 01EC4B |
 | 15A000 | 0AA000 | 24576 | data | 01EC4B |
+| 168000 | 0B0000 | 36178 | apu |  |
 | 179000 | 0B9000 | 22458 | apu |  |
 | 188000 | 0C0000 | 45610 | apu |  |
 | 1A8001 | 0D0001 | 43239 | apu |  |

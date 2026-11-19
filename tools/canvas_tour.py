@@ -59,6 +59,16 @@ SCENARIOS = {
     # title states of $01:8308); a while to watch each, then Mario.
     "title": ["notitle"] + [pt for x in (62, 86, 107, 118, 130, 144, 163, 174, 190, 203)
                             for pt in ((x, 72), ("wait", 240))] + [(128, 168)],
+    # The title clicked through another way: the random pick of $01:E20C at
+    # start ($0547) lands on the other sound bank and the red-framed canvas.
+    "title2": ["notitle"] + [(x, y) for y in (40, 64) for x in (40, 72, 104, 136, 168, 200, 224)]
+              + [(128, 120), (60, 150), (200, 150), ("wait", 600), (128, 112), (47, 212),
+                 ("drag", 40, 60, 200, 150)],
+    # The music editor's sample songs (bottom bar), each played a while,
+    # the time signatures and back.
+    "music2": [MODE_BAR, (102, 212), (128, 112), (46, 212), ("wait", 300), (148, 212), ("wait", 600),
+               (166, 212), ("wait", 600), (190, 212), ("wait", 600), (82, 212), (98, 212),
+               (128, 212), (222, 212)],
     # Save (the robot fills SRAM; START when it is done), then load it back.
     "saveload": [(47, 212), ("drag", 40, 60, 200, 150), MODE_BAR, (129, 212), (138, 82), (128, 112),
                  (128, 190), ("wait", 2700), (128, 190), (138, 123), (128, 112), (128, 190),
