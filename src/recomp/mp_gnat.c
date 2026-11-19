@@ -1451,7 +1451,8 @@ static bool phase_native(uint16_t h) {
             if (bus_read8(g_cpu.DB, (uint16_t)(0x05A5 + k)) && !recomp_timed_trusted(kind[k])) return false;
         return true;
     }
-    return h == 0xC012 || h == 0xAF14 || h == 0xC3C4;
+    return h == 0xC012 || h == 0xAF14 || h == 0xC3C4 ||
+           h == 0xB0CA || h == 0xB153 || h == 0xB17B || h == 0xB27D;
 }
 /* $A60E ($0026, table $01:A615) and $A5F3 ($0024, table $01:A5FA) dispatch
  * through $01:E393; the handler runs where the JSR left S. */
@@ -1629,7 +1630,372 @@ void mp_01B925(void) {
     call_jsr(0x01B5DC);
 }
 
+/* ---- The boss's steps ($05D7, dispatched by $B5F4 and $B60F). All 8-bit.
+ * Each begins with the shot animation $B698 while $0042 is set. */
+static void boss_anim(void) { if (GRD(0x0042)) call_jsr(0x01B698); }
+
+/* $01:B6A1: step 9, idle. */
+void mp_01B6A1(void) { boss_anim(); }
+
+/* $01:B6AA: step 0, choose: a coin toss ($E20C below $40) for the
+ * swatter's half of the screen (y $90); in reach (+-$10 of x) a lunge
+ * (step 5), else, unless blinking, a dive (step 3); otherwise step 1. */
+void mp_01B6AA(void) {
+    if (!GRD(0x0042)) return;
+    call_jsr(0x01B698);
+    call_jsl(0x01E20C);
+    uint8_t r = (uint8_t)CPU_A16();
+    uint8_t sy = bus_read8(0x00, 0x04DE), sx = bus_read8(0x00, 0x04DC);
+    bool near = r < 0x40 ? sy < 0x90 : sy >= 0x90;
+    uint8_t step = 0x01;
+    if (near) {
+        uint8_t bx = GRD(0x014B);
+        if ((uint8_t)(bx - 0x10) < sx && (uint8_t)(bx + 0x10) >= sx) step = 0x05;
+        else if (GRD(0x0040) == 0) step = 0x03;
+        if (step != 0x01) { GWR(0x0047, 0x0F); GWR(0x0088, 0xFF); }
+    }
+    GWR(0x05D7, step);
+    CPU_SET_A8(step);
+}
+
+static void boss_stop(void) {
+    GWR(0x020E, 0); GWR(0x0290, 0); GWR(0x024F, 0); GWR(0x02D1, 0);
+}
+
+/* $01:B70F: step 1, slide toward the swatter's x (kept within $38-$C8):
+ * $0312 = half the distance for $20 frames; when there, step 2. */
+void mp_01B70F(void) {
+    if (!GRD(0x0042)) return;
+    call_jsr(0x01B698);
+    if (GRD(0x020E) == 0) {
+        uint8_t a = bus_read8(0x00, 0x04DC);
+        if (a < 0x38) a = 0x38; else if (a >= 0xC8) a = 0xC8;
+        uint8_t bx = GRD(0x014B), d = (uint8_t)(a - bx);
+        if (d != 0) {
+            bool left = a < bx;
+            if (left) d = (uint8_t)-d;
+            d >>= 1;
+            if (d != 0) {
+                GWR(0x0312, d);
+                GWR(0x020E, 0x20);
+                GWR(0x0290, 0);
+                GWR(0x024F, left ? 0x80 : 0x00);
+                GWR(0x02D1, 0);
+                return;
+            }
+        }
+    } else if (GRD(0x0312) != 0) return;
+    boss_stop();
+    GWR(0x0047, 0x03);
+    GWR(0x0088, 0xFF);
+    GWR(0x05D7, GRD(0x05D7) + 1);
+}
+
+/* $01:BA61 (JMP from $B784): a fan of 8 projectiles from the boss
+ * (x $014B, y $01CD - 4), headings $20 apart from a turning start ($05E5),
+ * speed/accel/turn from $05B0-$05B2, in the first 8 free slots from $0F
+ * down. Nothing if fewer than 8 are free. */
+static void boss_fan(void) {
+    uint16_t s = g_cpu.S;
+    bus_wram_write8(s, GRD(0x014B));
+    bus_wram_write8((uint16_t)(s - 1), (uint8_t)(GRD(0x01CD) - 4));
+    GWR(0x05E5, GRD(0x05E5) + 1);
+    uint8_t ang = GRD(0x05E5) & 0x1F;
+    bus_wram_write8((uint16_t)(s - 2), ang);
+    uint8_t y = 0;
+    int x = 0x0F;
+    for (; x >= 0; x--) {
+        if (GRD(0x0353 + x) == 0) { GWR(0x05D9 + y, x); y++; }
+        if (y == 8) break;
+    }
+    if (y == 8) {
+        for (int k = 7; k >= 0; k--) {
+            x = GRD(0x05D9 + k);
+            GWR(0x0413 + x, bus_wram_read8(s));
+            GWR(0x03E3 + x, 0);
+            GWR(0x0473 + x, bus_wram_read8((uint16_t)(s - 1)));
+            GWR(0x0443 + x, 0);
+            GWR(0x04A3 + x, GRD(0x05B0));
+            GWR(0x04D3 + x, ang);
+            ang = (uint8_t)(ang + 0x20);
+            bus_wram_write8((uint16_t)(s - 2), ang);
+            GWR(0x0503 + x, GRD(0x05B1));
+            GWR(0x0533 + x, GRD(0x05B2));
+            GWR(0x0563 + x, 0x04);
+            GWR(0x0383 + x, 0);
+            GWR(0x03B3 + x, 0);
+            GWR(0x0353 + x, GRD(0x0353 + x) + 1);
+        }
+        y = 0xFF;
+    }
+    g_cpu.X = (uint16_t)((g_cpu.X & 0xFF00) | (uint8_t)x);
+    g_cpu.Y = (uint16_t)((g_cpu.Y & 0xFF00) | y);
+    CPU_SET_A8(bus_wram_read8(s));
+}
+
+/* $01:B784: step 2, the throw: at animation frame $0D / $2C, sound 3 and
+ * the fan; when the animation ends ($0047 = 0), back to step 0. */
+void mp_01B784(void) {
+    boss_anim();
+    uint8_t a = GRD(0x0047);
+    if (a == 0) { GWR(0x05D7, 0); return; }
+    if (a != 0x0D || GRD(0x0088) != 0x2C) return;
+    CPU_SET_A8(0x03);
+    call_jsl(0x01D328);
+    boss_fan();
+}
+
+/* The boss's body stings like a shot (slot $2F placed at it). */
+static void boss_sting(void) {
+    GWR(0x0442, GRD(0x014B));
+    GWR(0x04A2, (uint8_t)(GRD(0x01CD) + 0x2C));
+    sting_4x4(0x2F);
+}
+
+/* $01:B7E3: step 5, the lunge down: at animation frame $12 the move
+ * ($7F frames, speed $0D, sound $0E) starts; when it stops, next step. */
+void mp_01B7E3(void) {
+    call_jsr(0x01B698);
+    if (GRD(0x020E) == 0) {
+        if (GRD(0x0047) != 0x12) return;
+        GWR(0x020E, 0x7F); GWR(0x0290, 0); GWR(0x024F, 0x40); GWR(0x02D1, 0);
+        GWR(0x0312, 0x0D);
+        GWR(0x004A, 0x02);
+        CPU_SET_A8(0x0E);
+        call_jsl(0x01D328);
+    }
+    if (GRD(0x0312) == 0) { boss_stop(); GWR(0x05D7, GRD(0x05D7) + 1); }
+    boss_sting();
+}
+
+/* $01:B841: step 6, back up to y $40 (turning toward the middle), then
+ * step 0. */
+void mp_01B841(void) {
+    boss_anim();
+    if (GRD(0x020E) == 0) {
+        GWR(0x020E, 0x40); GWR(0x0290, 0);
+        if (GRD(0x014B) & 0x80) { GWR(0x024F, 0x80); GWR(0x02D1, 0x02); }
+        else { GWR(0x024F, 0); GWR(0x02D1, 0xFE); }
+    }
+    if (GRD(0x01CD) < 0x40) {
+        GWR(0x01CD, 0x40);
+        boss_stop();
+        GWR(0x05D7, 0); GWR(0x004A, 0);
+    }
+    boss_sting();
+}
+
+/* $01:B62A: the hover timer off. */
+void mp_01B62A(void) { GWR(0x05E7, 0); }
+
+/* $01:B62E: hover: rise ($018C fraction - $40) to y $40, then wait
+ * $20-$5F frames ($E20C) sinking slowly (+$20; the ADC keeps the carry the
+ * dispatch left). */
+void mp_01B62E(void) {
+    bool c = cpu_get_p() & 0x01;
+    if (GRD(0x05E7) == 0) {
+        if (GRD(0x01CD) < 0x40) {
+            GWR(0x01CD, 0x40);
+            GWR(0x018C, 0);
+            call_jsl(0x01E20C);
+            GWR(0x05E7, (uint8_t)(((uint8_t)CPU_A16() & 0x3F) + 0x20));
+            return;
+        }
+        uint8_t f = GRD(0x018C);
+        GWR(0x018C, (uint8_t)(f - 0x40));
+        if (f < 0x40) GWR(0x01CD, GRD(0x01CD) - 1);
+        return;
+    }
+    GWR(0x05E7, GRD(0x05E7) - 1);
+    unsigned v = GRD(0x018C) + 0x20u + (c ? 1 : 0);
+    GWR(0x018C, (uint8_t)v);
+    if (v > 0xFF) GWR(0x01CD, GRD(0x01CD) + 1);
+}
+
+/* $01:B66F: bob: rise to y $40, then sink for 0-7 frames ($E20C). */
+void mp_01B66F(void) {
+    if (GRD(0x05E7) == 0) {
+        if (GRD(0x01CD) < 0x40) {
+            GWR(0x01CD, 0x40);
+            GWR(0x018C, 0);
+            call_jsl(0x01E20C);
+            GWR(0x05E7, (uint8_t)CPU_A16() & 0x07);
+            return;
+        }
+        GWR(0x01CD, GRD(0x01CD) - 1);
+        return;
+    }
+    GWR(0x05E7, GRD(0x05E7) - 1);
+    GWR(0x01CD, GRD(0x01CD) + 1);
+}
+
+#ifndef G16
+#define G16(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+#define S16(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+#endif
+/* ---- The boss phases of Gnat Attack ($0024 = 3..6, table $A5FA). The
+ * boss is gnats 0-3 moving as one: x $014B, y $01CD copied to all four. */
+
+/* Draw gnat x with the animation script at $01:B3xx (lo = xx). */
+static void boss_part(uint8_t x, uint8_t lo) {
+    uint16_t s = g_cpu.S;
+    bus_wram_write8(s, 0x01);
+    bus_wram_write8((uint16_t)(s - 1), 0xB3);
+    bus_wram_write8((uint16_t)(s - 2), lo);
+    g_cpu.S = (uint16_t)(s - 3);
+    g_cpu.X = (uint16_t)((g_cpu.X & 0xFF00) | x);
+    call_jsr(0x01BD87);
+    g_cpu.S = s;
+    CPU_SET_A8(0x01);
+}
+static void boss_join(void) {
+    uint8_t x = GRD(0x014B), y = GRD(0x01CD);
+    GWR(0x014C, x); GWR(0x014D, x); GWR(0x014E, x);
+    GWR(0x01CE, y); GWR(0x01CF, y); GWR(0x01D0, y);
+}
+/* The fade value ($00:0104): every 4th frame of the $05B4 count a step,
+ * $0F between. */
+static uint8_t boss_fade(bool down) {
+    uint8_t a = GRD(0x05B4);
+    if (a & 0x03) return 0x0F;
+    uint8_t v = (uint8_t)((uint8_t)(a - 1) >> 2);
+    return down ? v : (uint8_t)((uint8_t)~v + 0x10);
+}
+
+/* $01:B0CA: phase 3, the boss arrives: its jingle (song $0B + $0014),
+ * $CD86, its numbers for this level from the tables at $01:CD77..CD83,
+ * all four parts at (x $80, y $40) at rest, no shots, palette cleared. */
+void mp_01B0CA(void) {
+    uint8_t p0 = cpu_get_p();
+    CPU_SET_A16((uint16_t)(G16(0x0014) + 0x000B));
+    call_jsl(0x01D308);
+    call_jsr(0x01CD86);
+    op_sep(0x30);
+    uint8_t lv = GRD(0x0014);
+    GWR(0x05AF, bus_read8(0x01, (uint16_t)(0xCD77 + lv)));
+    GWR(0x05B0, bus_read8(0x01, (uint16_t)(0xCD7A + lv)));
+    GWR(0x05B1, bus_read8(0x01, (uint16_t)(0xCD7D + lv)));
+    GWR(0x05B2, bus_read8(0x01, (uint16_t)(0xCD80 + lv)));
+    GWR(0x05B3, bus_read8(0x01, (uint16_t)(0xCD83 + lv)));
+    static const uint16_t zero[] = { 0x010A, 0x018C, 0x0047, 0x0088, 0x00C9, 0x020E, 0x024F, 0x0290, 0x02D1, 0x0312 };
+    for (int x = 3; x >= 0; x--) {
+        GWR(0x014B + x, 0x80);
+        GWR(0x01CD + x, 0x40);
+        for (unsigned k = 0; k < sizeof zero / sizeof *zero; k++) GWR(zero[k] + x, 0);
+    }
+    GWR(0x05B4, 0x40);
+    GWR(0x05D5, 0); GWR(0x05D7, 0); GWR(0x05E7, 0);
+    g_cpu.X = 0x00FF;
+    call_jsr(0x01BF99);
+    GWR(0x0024, GRD(0x0024) + 1);
+    op_rep(0x30);
+    call_jsr(0x01B5D1);
+    call_jsr(0x01A44D);
+    S16(0x0046, 0x0001);
+    CPU_SET_A16(0x0001);
+    cpu_set_p(p0);
+}
+
+/* $01:B153: phase 4, fade out over $40 frames. */
+void mp_01B153(void) {
+    uint8_t p0 = cpu_get_p();
+    op_sep(0x30);
+    bus_write8(0x00, 0x0104, boss_fade(true));
+    uint8_t n = (uint8_t)(GRD(0x05B4) - 1);
+    GWR(0x05B4, n);
+    if (n == 0) { GWR(0x05B4, 0x40); GWR(0x0024, GRD(0x0024) + 1); }
+    cpu_set_p(p0);
+}
+
+/* $01:B17B: phase 5, fade in over $40 frames with the boss's colours
+ * stepping up toward $02:FF60 every second frame, the boss moving and
+ * drawn (parts 0 and 1). */
+void mp_01B17B(void) {
+    uint8_t p0 = cpu_get_p();
+    bool carry = g_cpu.flag_C;              /* reaches $B62E's ADC through $B60F */
+    if (!(G16(0x05B4) & 0x0001)) {
+        for (int x = 0x1E; x >= 0; x -= 2) {
+            uint16_t want = bus_read16(0x02, (uint16_t)(0xFF60 + x));
+            static const uint16_t mask[3] = { 0x001F, 0x03E0, 0x7C00 }, one[3] = { 0x0001, 0x0020, 0x0400 };
+            for (int k = 0; k < 3; k++) {
+                uint16_t c = G16(0x05B5 + x);
+                uint16_t up = (uint16_t)((c & mask[k]) + one[k]);
+                carry = (want & mask[k]) >= up;                      /* CMP $01,s */
+                if (carry) S16(0x05B5 + x, (uint16_t)((c & ~mask[k]) | up));
+            }
+        }
+    }
+    op_sep(0x30);
+    bus_write8(0x00, 0x0104, boss_fade(false));
+    if (!(GRD(0x05B4) & 0x03))                                   /* CLC; ADC #$10 */
+        carry = (unsigned)(uint8_t)~(uint8_t)((uint8_t)(GRD(0x05B4) - 1) >> 2) + 0x10 > 0xFF;
+    g_cpu.flag_C = carry;
+    call_jsr(0x01B60F);
+    boss_join();
+    boss_part(0x00, 0x40);
+    boss_part(0x01, 0xB6);
+    call_jsr(0x01B255);
+    uint8_t n = (uint8_t)(GRD(0x05B4) - 1);
+    GWR(0x05B4, n);
+    if (n == 0) GWR(0x0024, GRD(0x0024) + 1);
+    cpu_set_p(p0);
+}
+
+/* $01:B27D: phase 6, the fight: the shot animation tick ($0042 = carry of
+ * $0043 + $05AF), the boss's move and step, a random idle animation, hits
+ * ($B925, not while blinking $05D5), the projectiles while not beaten
+ * (step < 8), the four parts drawn. 20 hits ($00C9 bit 7): next phase. */
+void mp_01B27D(void) {
+    uint8_t p0 = cpu_get_p();
+    op_sep(0x30);
+    unsigned t = GRD(0x0043) + GRD(0x05AF);
+    GWR(0x0043, (uint8_t)t);
+    GWR(0x0042, t > 0xFF ? 1 : 0);
+    g_cpu.flag_C = false;                                        /* ROL $0042 of 0 */
+    call_jsr(0x01B60F);
+    call_jsr(0x01B5F4);
+    if (GRD(0x0047) == 0) {
+        call_jsl(0x01E20C);
+        if ((uint8_t)CPU_A16() >= 0x80) GWR(0x0047, 0x2E);
+    }
+    boss_join();
+    if (GRD(0x05D5) == 0) call_jsr(0x01B925);
+    GWR(0x0046, 0x01);
+    uint8_t b = GRD(0x05D5);
+    if (b) {
+        GWR(0x05D5, b - 1);
+        if (b & 0x01) GWR(0x0046, 0);
+    }
+    if (GRD(0x05D7) < 0x08) {
+        call_jsr(0x01BAD1);
+        call_jsr(0x01BB1A);
+        call_jsr(0x01BBBE);
+        call_jsr(0x01BC57);
+    }
+    boss_part(0x00, 0x40);
+    boss_part(0x01, 0xB6);
+    boss_part(0x02, 0xCA);
+    boss_part(0x03, 0xF0);
+    if (GRD(0x00C9) & 0x80) { GWR(0x0024, GRD(0x0024) + 1); GWR(0x001A, 0); }
+    cpu_set_p(p0);
+}
+
 void mp_register_gnat(void) {
+    func_table_register(0x01B0CA, mp_01B0CA);
+    func_table_register(0x01B153, mp_01B153);
+    func_table_register(0x01B17B, mp_01B17B);
+    func_table_register(0x01B27D, mp_01B27D);
+
+    func_table_register(0x01B6A1, mp_01B6A1);
+    func_table_register(0x01B6AA, mp_01B6AA);
+    func_table_register(0x01B70F, mp_01B70F);
+    func_table_register(0x01B784, mp_01B784);
+    func_table_register(0x01B7E3, mp_01B7E3);
+    func_table_register(0x01B841, mp_01B841);
+    func_table_register(0x01B62A, mp_01B62A);
+    func_table_register(0x01B62E, mp_01B62E);
+    func_table_register(0x01B66F, mp_01B66F);
+
     func_table_register(0x01BAD1, mp_01BAD1);
     func_table_register(0x01BBBE, mp_01BBBE);
     func_table_register(0x01B925, mp_01B925);
