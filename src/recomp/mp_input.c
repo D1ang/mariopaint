@@ -371,14 +371,25 @@ void mp_008B48(void) {
  * animates a small sprite offset.
  * ======================================================================== */
 void mp_01DCB9(void) {
-    if (bus_wram_read8(0x1B1C) == 0) return;
-    if ((int8_t)bus_wram_read8(0x1B1D) >= 0) return;
-
-    /* Read animation state */
-    uint8_t state = bus_wram_read8(0x1B1E);
-    state += 4;
-    if (state >= 8) state = 0;
-    bus_wram_write8(0x1B1E, state);
+    /* $01:DCB9 (JSL, A 8-bit): the busy animation while a fill runs
+     * ($1B1C set, $1B1D negative): step $1B1E by 4 (back to $10 past $7F),
+     * then from the 4-byte record at $01:DCF9 + step: the cursor sprite's
+     * X/Y ($0226/$0227) moved by the first two, its tile ($0228) and the
+     * next $1B1D from the last two. */
+    uint8_t db = g_cpu.DB;
+    if (bus_read8(db, 0x1B1C) == 0) return;
+    if (!(bus_read8(db, 0x1B1D) & 0x80)) return;
+    uint8_t st = (uint8_t)(bus_read8(db, 0x1B1E) + 4);
+    if (st >= 0x80) st = 0x10;
+    bus_write8(db, 0x1B1E, st);
+    g_cpu.X = st;
+    uint16_t t = (uint16_t)(0xDCF9 + st);
+    bus_write8(db, 0x0226, (uint8_t)(bus_read8(0x01, t) + bus_read8(db, 0x0226)));
+    bus_write8(db, 0x0227, (uint8_t)(bus_read8(0x01, (uint16_t)(t + 1)) + bus_read8(db, 0x0227)));
+    bus_write8(db, 0x0228, bus_read8(0x01, (uint16_t)(t + 2)));
+    uint8_t v = bus_read8(0x01, (uint16_t)(t + 3));
+    bus_write8(db, 0x1B1D, v);
+    CPU_SET_A8(v);
 }
 
 /* ========================================================================

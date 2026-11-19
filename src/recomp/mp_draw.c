@@ -13,6 +13,7 @@
 
 #include <snesrecomp/cpu_ops.h>
 #include <mp/functions.h>
+#include <mp/calls.h>
 #include <mp/mem.h>
 #include <snesrecomp/snesrecomp.h>
 
@@ -166,59 +167,178 @@ void mp_00B305(void) {
 }
 
 /* ========================================================================
- * $00:B3FF — Flood fill routine
+ * $00:B3FF — the paint can: flood fill from the cursor ($86, $88)
  *
- * Performs a flood fill starting from ($86,$88) using the current
- * fill color. Uses a stack-based algorithm with the scratch buffer
- * at $7F:0000 to track visited pixels.
- *
- * This is complex and heavily optimized 65816 code. We implement
- * the outer shell and dispatch the inner fill loop.
+ * The canvas inside $19B6..$19BC; $7F:0000.. marks filled pixels (cleared
+ * by $8B29); the colour under the cursor ($B5CB) is the one to replace
+ * ($6C). A queue of spans at $7F:6000 ($7C head, $7E tail, wrapping at
+ * $2000) is worked through: each span runs left while the colour matches,
+ * then right, plotting ($B393) and queueing the rows above and below where
+ * they start matching. A mouse button pressed meanwhile ($04CA into
+ * $1A0C, bit $20) stops it at once. $1B1C is $FF while it runs.
  * ======================================================================== */
-void mp_00B3FF(void) {
-    /* Set up fill bounds */
-    bus_wram_write16(0x19B6, bus_wram_read16(0x19AE) + 5);
-    bus_wram_write16(0x19B8, bus_wram_read16(0x19B0) + 4);
-    bus_wram_write16(0x19BA, bus_wram_read16(0x19B2) + 1);
-    bus_wram_write16(0x19BC, bus_wram_read16(0x19B4) - 1);
+#define FD(o)      bus_read16(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define FDW(o, v)  bus_write16(0x00, (uint16_t)(g_cpu.DP + (o)), (uint16_t)(v))
+#define FD8(o)     bus_read8(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define FDW8(o, v) bus_write8(0x00, (uint16_t)(g_cpu.DP + (o)), (uint8_t)(v))
 
-    /* Clear mouse state during fill */
-    bus_wram_write16(0x04CA, 0x0000);
-    bus_wram_write16(0x1A0C, 0x0000);
-
-    /* Set up fill animation */
-    op_sep(0x20);
-    bus_wram_write8(0x1B1E, 0x00);
-    bus_wram_write8(0x1B1C, 0xFF);
-    bus_wram_write8(0x1B1D, 0xFF);
-    op_rep(0x20);
-
-    /* Clear scratch buffer for visited pixel tracking */
-    mp_008B29();
-
-    /* Compute start position offset */
-    bus_wram_write16(0x0080, bus_wram_read16(0x0086));
-    bus_wram_write16(0x0082, bus_wram_read16(0x0088));
-    func_table_call(0x00B305);
-
-    /* Get the pixel bit mask for the start X position */
-    uint16_t x_bit = bus_wram_read16(0x0086) & 0x0007;
-    /* Read the current pixel color at the start position */
-    /* This involves reading 4 bitplanes from the canvas tile */
-
-    /* The actual fill algorithm is deeply recursive/iterative.
-     * Dispatch to the original code path for the core fill. */
-    func_table_call(0x00B610);  /* Seed fill */
-
-    /* Main fill loop */
-    /* The fill uses a stack of coordinates to visit.
-     * Each iteration pops a coordinate, checks the pixel,
-     * and pushes neighbors if they match the fill color. */
-    /* This would require full 4BPP bitplane reading/writing.
-     * For now, mark as implemented and let sub-calls handle it. */
-
-    bus_wram_write8(0x1B1C, 0x00);
+static uint32_t fill_canvas(void) {                     /* the long pointer DP $0A */
+    uint16_t a = (uint16_t)(g_cpu.DP + 0x0A);
+    return bus_read16(0x00, a) | ((uint32_t)bus_read8(0x00, (uint16_t)(a + 2)) << 16);
 }
+static uint16_t fill_rd(uint32_t a) { return bus_read16((uint8_t)(a >> 16), (uint16_t)a); }
+static void fill_wr(uint32_t a, uint16_t v) { bus_write16((uint8_t)(a >> 16), (uint16_t)a, v); }
+static uint16_t fill_bit(uint16_t x2) { return bus_read16(g_cpu.DB, (uint16_t)(0xB600 + x2)); }
+
+/* $00:B5CB: the colour (0-15) of pixel bit X/2 at tile offset Y. */
+static uint16_t fill_colour(uint16_t x2, uint16_t y) {
+    uint32_t c = fill_canvas();
+    uint16_t m = fill_bit(x2);
+    FDW(0x76, fill_rd(c + y) & m);
+    FDW(0x78, fill_rd(c + (uint16_t)(y + 0x10)) & m);
+    uint16_t v = 0;
+    v = (uint16_t)((v + (FD8(0x79) ? 1 : 0)) << 1);
+    v = (uint16_t)((v + (FD8(0x78) ? 1 : 0)) << 1);
+    v = (uint16_t)((v + (FD8(0x77) ? 1 : 0)) << 1);
+    v = (uint16_t)(v + (FD8(0x76) ? 1 : 0));
+    return v;
+}
+void mp_00B5CB(void) {
+    uint16_t y = g_cpu.Y;
+    uint16_t v = fill_colour((uint16_t)(g_cpu.X & 0x00FF), y);
+    CPU_SET_A16(v);
+    g_cpu.X &= 0x00FF;
+    g_cpu.Y = y;
+}
+
+/* $00:B393: plot the fill colour (the brush colour words $9A/$9C of
+ * $B23C) at pixel $86 of tile offset $84, and mark it in $7F:0000. */
+void mp_00B393(void) {
+    uint16_t bit = fill_bit((uint16_t)((FD(0x86) & 7) << 1));
+    FDW(0x92, bit);
+    FDW(0x94, bit);
+    g_cpu.Y = 0;
+    push_a16(bit);
+    call_jsr(0x00B23C);
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    bus_write16(g_cpu.DB, 0x19BE, 0xFFFF);
+    uint16_t v = (uint16_t)(FD(0x9A) | FD(0x9C));
+    uint16_t both = (uint16_t)(((uint16_t)((v << 8) | (v >> 8))) | v);
+    FDW(0x92, (uint16_t)(both & FD(0x92)));
+    FDW(0x94, (uint16_t)(both & FD(0x94)));
+    uint32_t c = fill_canvas();
+    uint16_t y = FD(0x84);
+    uint16_t m = bus_read16(g_cpu.DB, 0x19BE);
+    uint16_t d = fill_rd(c + y);
+    fill_wr(c + y, (uint16_t)(((FD(0x9A) ^ d) & FD(0x92) & m) ^ d));
+    y = (uint16_t)(y + 0x10);
+    d = fill_rd(c + y);
+    fill_wr(c + y, (uint16_t)(((FD(0x9C) ^ d) & FD(0x94) & m) ^ d));
+    g_cpu.Y = y;
+    uint16_t x = FD(0x84);
+    bus_write8(0x7F, x, (uint8_t)(bus_read8(0x7F, x) | (uint8_t)bit));
+    g_cpu.X = x;
+}
+
+/* $00:B610: queue a span start (pixel x, row y, tile offset), unless the
+ * queue is full. */
+static void fill_push(uint8_t px, uint8_t py, uint16_t off) {
+    uint16_t t = FD(0x7E);
+    bus_write16(0x7F, (uint16_t)(0x6000 + t), (uint16_t)((px << 8) | py));
+    bus_write16(0x7F, (uint16_t)(0x6002 + t), off);
+    if ((uint16_t)((FD(0x7C) - 4) & 0x1FFF) == t) return;
+    FDW(0x7E, (uint16_t)((t + 4) & 0x1FFF));
+}
+
+/* Is pixel bit X2 of tile offset X already filled? */
+static bool fill_done(uint16_t x2, uint16_t off) {
+    return ((uint8_t)fill_bit(x2) & bus_read8(0x7F, off)) != 0;
+}
+
+void mp_00B3FF(void) {
+    uint8_t db = g_cpu.DB;
+    uint8_t p0 = cpu_get_p();
+#define R16(o)   bus_read16(db, (uint16_t)(o))
+#define W16(o,v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+    FDW(0xB0, (uint16_t)(g_cpu.S - 1));                     /* PHP; TSX; STX $B0 */
+    W16(0x19B6, R16(0x19AE) + 5);
+    W16(0x19B8, R16(0x19B0) + 4);
+    W16(0x19BA, R16(0x19B2) + 1);
+    W16(0x19BC, R16(0x19B4) - 1);
+    W16(0x04CA, 0);
+    W16(0x1A0C, 0);
+    bus_write8(db, 0x1B1E, 0x00);
+    bus_write8(db, 0x1B1C, 0xFF);
+    bus_write8(db, 0x1B1D, 0xFF);
+    call_jsr(0x008B29);
+    FDW8(0x80, FD8(0x86));
+    FDW8(0x82, FD8(0x88));
+    call_jsr(0x00B305);
+    FDW(0x6C, fill_colour((uint16_t)((FD(0x86) & 7) << 1), FD(0x84)));
+    FDW(0x7C, 0);
+    FDW(0x7E, 0);
+    fill_push(FD8(0x86), FD8(0x88), FD(0x84));
+    for (;;) {                                               /* $B46F */
+        if (R16(0x1A0C) & 0x0020) break;                     /* $B637: stopped */
+        if (FD(0x7C) == FD(0x7E)) break;                     /* queue empty */
+        uint16_t h = FD(0x7C);
+        uint16_t e = bus_read16(0x7F, (uint16_t)(0x6000 + h));
+        FDW(0x84, bus_read16(0x7F, (uint16_t)(0x6002 + h)));
+        FDW(0x7C, (uint16_t)((h + 4) & 0x1FFF));
+        FDW8(0x88, (uint8_t)e);
+        FDW8(0x86, (uint8_t)(e >> 8));
+        if (fill_done((uint16_t)((FD(0x86) & 7) << 1), FD(0x84))) continue;
+        uint16_t y = FD(0x84);
+        for (;;) {                                           /* $B4A4: run left */
+            if (FD(0x86) < R16(0x19B6)) break;
+            uint16_t x2 = (uint16_t)(((uint16_t)(FD(0x86) - 1) & 7) << 1);
+            if (x2 == 0x000E) y = (uint16_t)(y - 0x20);
+            if (fill_colour(x2, y) != FD(0x6C)) break;
+            FDW(0x84, y);
+            FDW(0x86, FD(0x86) - 1);
+        }
+        FDW8(0x70, 0); FDW8(0x72, 0);
+        bus_write8(db, 0x1A0C, 0x00);
+        for (;;) {                                           /* $B4D4: run right */
+            if (FD8(0x86) >= (uint8_t)R16(0x19B8)) break;
+            bus_write8(db, 0x1A0C, (uint8_t)(bus_read8(db, 0x04CA) | bus_read8(db, 0x1A0C)));
+            call_jsr(0x00B393);
+            for (int dir = -1; dir <= 1; dir += 2) {         /* the row above, then below */
+                uint8_t row = FD8(0x88);
+                if (dir < 0 ? row < (uint8_t)R16(0x19BA) : row >= (uint8_t)R16(0x19BC)) continue;
+                FDW8(0x74, 0);
+                uint16_t o = FD(0x84);
+                if (dir < 0) {
+                    if (((uint16_t)(row - 1) & 7) == 7) o = (uint16_t)(o - 0x03F0);
+                    o = (uint16_t)(o - 2);
+                } else {
+                    if (((uint16_t)(row + 1) & 7) == 0) o = (uint16_t)(o + 0x03F0);
+                    o = (uint16_t)(o + 2);
+                }
+                uint16_t x2 = (uint16_t)((FD(0x86) & 7) << 1);
+                if (fill_colour(x2, o) == FD(0x6C)) FDW(0x74, FD(0x74) + 1);
+                uint16_t flag = dir < 0 ? 0x70 : 0x72;
+                if (!fill_done(x2, o) && FD8(flag) == 0 && FD8(0x74) != 0)
+                    fill_push(FD8(0x86), (uint8_t)(row + dir), o);
+                FDW8(flag, FD8(0x74));
+            }
+            uint16_t o = FD(0x84);                           /* $B5A6: next pixel right */
+            uint16_t x2 = (uint16_t)(((uint16_t)(FD(0x86) + 1) & 7) << 1);
+            if (x2 == 0) o = (uint16_t)(o + 0x20);
+            if (fill_colour(x2, o) != FD(0x6C)) break;
+            FDW(0x84, o);
+            FDW(0x86, FD(0x86) + 1);
+        }
+    }
+    bus_write8(db, 0x1B1C, 0x00);
+    cpu_set_p(p0);
+#undef R16
+#undef W16
+}
+#undef FD
+#undef FDW
+#undef FD8
+#undef FDW8
 
 /* ========================================================================
  * $00:A22D — Load toolbar display tilemap
@@ -336,6 +456,8 @@ void mp_register_draw(void) {
     func_table_register(0x009D7D, mp_009D7D);
     func_table_register(0x00B305, mp_00B305);
     func_table_register(0x00B3FF, mp_00B3FF);
+    func_table_register(0x00B5CB, mp_00B5CB);
+    func_table_register(0x00B393, mp_00B393);
     func_table_register(0x00A22D, mp_00A22D);
     func_table_register(0x00A25B, mp_00A25B);
     func_table_register(0x0082B8, mp_0082B8);

@@ -223,7 +223,7 @@ void mp_00AB8A(void);  /* Ellipse drawing */
 void mp_00ADFB(void);  /* Stamp preview */
 void mp_00B0D3(void);  /* Pixel row plot */
 void mp_00B32D(void);  /* Masked draw */
-void mp_00B610(void);  /* Flood fill seed */
+/* $00:B610: the fill queue push, inside mp_00B3FF (mp_draw.c). */
 void mp_00B7D6(void);  /* Spray can effect */
 void mp_009C1B(void);  /* Draw completion */
 void mp_009F50(void);  /* Stamp commit */

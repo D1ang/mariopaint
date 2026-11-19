@@ -695,21 +695,7 @@ void mp_00B32D(void) {
     bus_write16(buf_bank, buf_base + addr23, new_23);
 }
 
-/* ========================================================================
- * $00:B610 — Flood fill seed
- *
- * Plants the initial fill seed at the current position.
- * Part of the flood fill algorithm at B3FF.
- * ======================================================================== */
-void mp_00B610(void) {
-    /* Seed the fill at the current position.
-     * Reads the pixel color at ($86,$88) and stores as fill target. */
-    uint16_t offset = bus_wram_read16(0x0084);
-    uint16_t x_bit = bus_wram_read16(0x0086) & 0x0007;
-
-    /* Mark seed in scratch buffer */
-    bus_write8(0x7F, offset, bus_read8(0x7F, offset) | (1 << (7 - x_bit)));
-}
+/* $00:B610 (the fill queue push) lives in mp_draw.c, inside $B3FF. */
 
 /* $00:B910 / $00:B926 (A 8-bit): sine and cosine of the angle A (0..$FF
  * a full turn) from the quarter-wave table at $00:B947; the value is the
@@ -884,7 +870,6 @@ void mp_register_shapes(void) {
     func_table_register(0x00AF5A, mp_00AF5A);
     func_table_register(0x00B0D3, mp_00B0D3);
     func_table_register(0x00B32D, mp_00B32D);
-    func_table_register(0x00B610, mp_00B610);
     func_table_register(0x00B7D6, mp_00B7D6);
     func_table_register(0x00AF2C, mp_00AF2C);
     func_table_register(0x00B910, mp_00B910);

@@ -97,6 +97,12 @@ SCENARIOS = {
     # then loading it from the menu.
     "savedboot": ["sram", MODE_BAR, (129, 212), (138, 123), (128, 112), (128, 190), ("wait", 2700),
                   (128, 190), (128, 112)],
+    # The paint can's flood fill ($B3FF): a closed square, then tool 5 set
+    # by a poke ($7E:04D0; no button found that sets it) and a click inside
+    # it and one outside.
+    "fill": [(62, 212), ("drag", 60, 60, 160, 60), ("drag", 160, 60, 160, 140),
+             ("drag", 160, 140, 60, 140), ("drag", 60, 140, 60, 60), ("poke", "7E04D0=05"),
+             (110, 100), ("wait", 400), ("poke", "7E04D0=05"), (200, 170), ("wait", 400)],
     # Save (the robot fills SRAM; START when it is done), then load it back.
     "saveload": [(47, 212), ("drag", 40, 60, 200, 150), MODE_BAR, (129, 212), (138, 82), (128, 112),
                  (128, 190), ("wait", 2700), (128, 190), (138, 123), (128, 112), (128, 190),
