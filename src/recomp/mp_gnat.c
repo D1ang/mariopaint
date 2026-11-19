@@ -1508,7 +1508,28 @@ void mp_01A505(void) {
 #undef G16
 #undef S16
 
+/* $01:BB1A / $01:BC57: animate the active sprites ($0353,X set) of slots
+ * $0F..0 with the table at $01:BB34, of slots $2E..$10 with $01:BC73. */
+static void anim_slots(uint8_t hi, uint8_t lo, uint16_t table) {
+    for (int x = hi; x >= lo; x--)
+        if (bus_read8(g_cpu.DB, (uint16_t)(0x0353 + x))) anim_shot((uint8_t)x, 0x010000u | table);
+    g_cpu.X = (uint8_t)(lo - 1);
+}
+void mp_01BB1A(void) { anim_slots(0x0F, 0x00, 0xBB34); }
+void mp_01BC57(void) { anim_slots(0x2E, 0x10, 0xBC73); }
+
+/* $01:B698 (8-bit): $BC7B for slot 0, then $0312 counted down. */
+void mp_01B698(void) {
+    g_cpu.X = 0;
+    call_jsr(0x01BC7B);
+    bus_write8(g_cpu.DB, 0x0312, (uint8_t)(bus_read8(g_cpu.DB, 0x0312) - 1));
+}
+
 void mp_register_gnat(void) {
+    func_table_register(0x01BB1A, mp_01BB1A);
+    func_table_register(0x01BC57, mp_01BC57);
+    func_table_register(0x01B698, mp_01B698);
+
     func_table_register(0x01C012, mp_01C012);
     func_table_register(0x01C0D3, mp_01C0D3);
     func_table_register(0x01AF14, mp_01AF14);

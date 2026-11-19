@@ -1101,7 +1101,258 @@ void mp_01D810(void) {
 #undef K16
 #undef KW16
 
+/* $00:8AFF (JSL): the canvas save ($8B03) for long callers. */
+void mp_008AFF(void) { call_jsr(0x008B03); }
+/* $00:C410 (JSL): $C414 for long callers. */
+void mp_00C410(void) { call_jsr(0x00C414); }
+
+/* $01:B5D1: clear the 16 words $05B5..$05D4. */
+void mp_01B5D1(void) {
+    for (int x = 0x001E; x >= 0; x -= 2) bus_write16(g_cpu.DB, (uint16_t)(0x05B5 + x), 0);
+    g_cpu.X = 0xFFFE;
+}
+
+/* $01:B5F4 / $01:B60F: dispatch on $05D7 through the jump tables at
+ * $01:B5FB / $01:B616 (the ROM's $01:E393 inline-table trick; the handler
+ * starts with A = its address and returns to this routine's caller). */
+static void dispatch_05D7(uint16_t table) {
+    uint16_t i = bus_read16(g_cpu.DB, 0x05D7) & 0x00FF;
+    uint16_t h = bus_read16(0x01, (uint16_t)(table + (i << 1)));
+    CPU_SET_A16(h);
+    tail_jmp(0x010000u | h);
+}
+void mp_01B5F4(void) { dispatch_05D7(0xB5FB); }
+void mp_01B60F(void) { dispatch_05D7(0xB616); }
+
+/* $00:D514: A frames of the stamp-sprite refresh ($0446 = 4, $D5F5,
+ * the palette step $01:E09B, a frame). */
+void mp_00D514(void) {
+    uint16_t n = CPU_A16();
+    do {
+        push_a16(n);
+        bus_write16(g_cpu.DB, 0x0446, 0x0004);
+        CPU_SET_A16(0x0004);
+        call_jsl(0x00D5F5);
+        call_jsl(0x01E09B);
+        call_jsl(0x01E2CE);
+        n = bus_wram_read16((uint16_t)(g_cpu.S + 1));
+        g_cpu.S = (uint16_t)(g_cpu.S + 2);
+        n--;
+        CPU_SET_A16(n);
+    } while (n != 0 && !g_quit);
+}
+
+/* $00:FD06: copy the song $0C3C.. back over the score $09E4.. ($250
+ * bytes). A and X are kept. */
+void mp_00FD06(void) {
+    uint16_t a = CPU_A16(), x0 = g_cpu.X;
+    for (int x = 0x024C; x >= 0; x -= 2)
+        bus_write16(g_cpu.DB, (uint16_t)(0x09E4 + x), bus_read16(g_cpu.DB, (uint16_t)(0x0C3C + x)));
+    CPU_SET_A16(a);
+    g_cpu.X = x0;
+}
+
+/* $00:A87E (JSL): queue the fixed 5-word DMA record at $A89E into the
+ * record list $0182.. at $0204 and count it in $0202. */
+void mp_00A87E(void) {
+    uint8_t db = g_cpu.DB;
+    bus_write16(db, 0x0202, 0);
+    uint16_t x = bus_read16(db, 0x0204);
+    for (uint16_t y = 0; y != 0x000A; y += 2, x += 2)
+        bus_write16(db, (uint16_t)(0x0182 + x), bus_read16(db, (uint16_t)(0xA89E + y)));
+    x--;
+    bus_write16(db, 0x0204, x);
+    g_cpu.X = x; g_cpu.Y = 0x000A;
+    bus_write16(db, 0x0202, (uint16_t)(bus_read16(db, 0x0202) + 1));
+}
+
+/* $00:AAC7: sound $7B, $10 frames, then song $1012 + 2 (or $1D when
+ * $1012 is 0) by $01:D308. Flags kept. */
+void mp_00AAC7(void) {
+    uint8_t p0 = cpu_get_p();
+    g_cpu.flag_M = false;
+    CPU_SET_A16(0x007B); call_jsl(0x01D368);
+    for (uint16_t n = 0x0010; n; n--) {
+        push_a16(n);
+        call_jsl(0x01E2CE);
+        g_cpu.S = (uint16_t)(g_cpu.S + 2);
+        if (g_quit) return;
+    }
+    uint16_t v = bus_read16(g_cpu.DB, 0x1012);
+    CPU_SET_A16(v ? (uint16_t)(v + 2) : 0x001D);
+    call_jsl(0x01D308);
+    cpu_set_p(p0);
+}
+
+/* $00:A982 (A 8-bit): layers $11 for a frame, the whole canvas buffer
+ * [$0A] ($6000 bytes) cleared, six frames, then layers $13 and a frame. */
+void mp_00A982(void) {
+    uint8_t p0 = cpu_get_p();
+    bus_write8(g_cpu.DB, 0x011A, 0x11);
+    call_jsl(0x01E2CE);
+    g_cpu.flag_M = false;
+    uint16_t a = (uint16_t)(g_cpu.DP + 0x0A);
+    uint32_t base = bus_read16(0x00, a) | ((uint32_t)bus_read8(0x00, (uint16_t)(a + 2)) << 16);
+    for (int y = 0x5FFE; y >= 0; y -= 2) {
+        uint32_t t = base + (uint32_t)y;
+        bus_write16((uint8_t)(t >> 16), (uint16_t)t, 0);
+    }
+    g_cpu.Y = 0xFFFE;
+    for (int i = 0; i < 6; i++) call_jsl(0x01E2CE);
+    bus_write16(g_cpu.DB, 0x011A, 0x0013);
+    CPU_SET_A16(0x0013);
+    call_jsl(0x01E2CE);
+    cpu_set_p(p0);
+}
+
+/* $00:FA35: the screen back on ($01:E2F3), then the tool switch to the
+ * music page $0C32 + 1 (with a 0 before it when $0E8C is $0F). */
+void mp_00FA35(void) {
+    call_jsl(0x01E2F3);
+    uint16_t page = (uint16_t)(bus_read16(g_cpu.DB, 0x0C32) + 1);
+    uint16_t aa = bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xAA));
+    if (bus_read16(g_cpu.DB, 0x0E8C) != 0x000F) {
+        call_tool_switch(aa, 1, &page);
+    } else {
+        uint16_t w[2] = { 0x0000, page };
+        call_tool_switch(aa, 2, w);
+    }
+}
+
+/* $00:EB3B: the pattern picture for the level $0EBC: 2 + the number of
+ * thresholds passed ($20 $40 $80 $C0, or $20 $40 $50 $90 with $0EBA). */
+void mp_00EB3B(void) {
+    uint16_t a = bus_read16(g_cpu.DB, 0x0EBC);
+    uint16_t y = bus_read16(g_cpu.DB, 0x0EBA);
+    static const uint16_t t0[4] = { 0x20, 0x40, 0x80, 0xC0 }, t1[4] = { 0x20, 0x40, 0x50, 0x90 };
+    const uint16_t *t = y ? t1 : t0;
+    uint16_t x = 2;
+    for (int i = 0; i < 4 && a >= t[i]; i++) x++;
+    g_cpu.X = x; g_cpu.Y = y;
+    CPU_SET_A16(x);
+}
+
+/* $01:CD86: queue the fixed 5-word DMA record at $01:CDCD into the record
+ * list $0182.. at $0204 and count it in $0202. */
+void mp_01CD86(void) {
+    bus_write16(0x00, 0x0202, 0);
+    uint16_t x = bus_read16(0x00, 0x0204);
+    for (uint16_t y = 0; y != 0x000A; y += 2, x += 2)
+        bus_write16(0x00, (uint16_t)(0x0182 + x), bus_read16(0x01, (uint16_t)(0xCDCD + y)));
+    x--;
+    bus_write16(0x00, 0x0204, x);
+    bus_write16(0x00, 0x0202, 0x0001);
+    g_cpu.X = x; g_cpu.Y = 0x000A;
+    CPU_SET_A16(0x0001);
+}
+
+/* $00:A097 (JSL): the tool switch $9FC4 for long callers: its own return
+ * address moves aside ($0992, bank $0994) so that $9FC4 finds its stack
+ * arguments, then goes back on the stack for the RTL. */
+void mp_00A097(void) {
+    uint16_t s = g_cpu.S;
+    uint16_t ret = bus_wram_read16((uint16_t)(s + 1));
+    uint8_t bank = bus_wram_read8((uint16_t)(s + 3));
+    bus_write16(g_cpu.DB, 0x0992, ret);
+    bus_write8(g_cpu.DB, 0x0994, bank);
+    g_cpu.S = (uint16_t)(s + 3);
+    call_jsr_ret(0x009FC4, 0xA0A5);                         /* JSR $9FC4 at $A0A3 */
+    bus_wram_write8(g_cpu.S, bank);
+    g_cpu.S = (uint16_t)(g_cpu.S - 1);
+    push_a16(ret);
+    CPU_SET_A16(ret);
+}
+
+/* $01:EB81 (JSL): counts $0563 down; at 0 the top rows of $7E:2040 are
+ * cleared, the screen updated, and the tool switch to $10 ($AA) with the
+ * canvas saved ($8AFF); mode $09D6 = $0C. */
+void mp_01EB81(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t c = (uint16_t)(bus_read16(db, 0x0563) - 1);
+    bus_write16(db, 0x0563, c);
+    if (c != 0) return;
+    for (int x = 0x007E; x >= 0; x -= 2) bus_write16(0x7E, (uint16_t)(0x2040 + x), 0x21EE);
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    bus_write16(0x00, (uint16_t)(g_cpu.DP + 0xAA), 0x0010);
+    push_a16(0x0010);
+    push_a16(0x0000);
+    CPU_SET_A16(0x0000);
+    call_jsl_ret(0x00A097, 0x01EBA9);
+    call_jsl_ret(0x008AFF, 0x01EBAD);
+    bus_write16(db, 0x09D6, 0x000C);
+}
+
+/* $01:ECAF: sound 9, the tool switch with word 4, $8B14, the switch back. */
+void mp_01ECAF(void) {
+    CPU_SET_A16(0x0009); call_jsl(0x01D368);
+    uint16_t aa = bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xAA));
+    push_a16(0x0004); push_a16(aa); push_a16(0x0001);
+    CPU_SET_A16(0x0001);
+    call_jsl_ret(0x00A097, 0x01ECC4);
+    call_jsl(0x008B14);
+    aa = bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xAA));
+    push_a16(aa); push_a16(0x0000);
+    CPU_SET_A16(0x0000);
+    call_jsl_ret(0x00A097, 0x01ECD3);
+}
+
+/* $01:E93A (JSL): music page 1; three rows of 4 tile words from
+ * $01:E980/E988/E990 into the screen ($7E:2654/2694/26D4); the score
+ * $09E4.. ($250 bytes) from the sample song $0EB6 in bank $02 (end
+ * offsets at $01:E978). */
+void mp_01E93A(void) {
+    uint8_t db = g_cpu.DB;
+    bus_write16(db, 0x0C32, 0x0001);
+    for (int x = 6; x >= 0; x -= 2) {
+        bus_write16(0x7E, (uint16_t)(0x2654 + x), bus_read16(0x01, (uint16_t)(0xE980 + x)));
+        bus_write16(0x7E, (uint16_t)(0x2694 + x), bus_read16(0x01, (uint16_t)(0xE988 + x)));
+        bus_write16(0x7E, (uint16_t)(0x26D4 + x), bus_read16(0x01, (uint16_t)(0xE990 + x)));
+    }
+    uint16_t x = bus_read16(0x01, (uint16_t)(0xE978 + (bus_read16(db, 0x0EB6) << 1)));
+    for (int y = 0x024E; y >= 0; y -= 2, x = (uint16_t)(x - 2))
+        bus_write16(db, (uint16_t)(0x09E4 + y), bus_read16(0x02, (uint16_t)(0xF310 + x)));
+    g_cpu.X = x; g_cpu.Y = 0xFFFE;
+}
+
+/* $01:F018: the free slot ($0A04 = 0) with the smallest $0A06 among the
+ * 4-byte slots from 4 up to $1C0E: its offset into $1C08. */
+void mp_01F018(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t x = 0x0004, y = 0xFFFF;
+    do {
+        if (bus_read16(db, (uint16_t)(0x0A04 + x)) == 0 && y >= bus_read16(db, (uint16_t)(0x0A06 + x))) {
+            y = bus_read16(db, (uint16_t)(0x0A06 + x));
+            bus_write16(db, 0x1C08, x);
+        }
+        x = (uint16_t)(x + 4);
+    } while (x != bus_read16(db, 0x1C0E));
+    g_cpu.X = x; g_cpu.Y = y;
+    CPU_SET_A16(x);
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00A097, mp_00A097);
+    func_table_register(0x01EB81, mp_01EB81);
+    func_table_register(0x01ECAF, mp_01ECAF);
+    func_table_register(0x01E93A, mp_01E93A);
+    func_table_register(0x01F018, mp_01F018);
+
+    func_table_register(0x00AAC7, mp_00AAC7);
+    func_table_register(0x00A982, mp_00A982);
+    func_table_register(0x00FA35, mp_00FA35);
+    func_table_register(0x00EB3B, mp_00EB3B);
+    func_table_register(0x01CD86, mp_01CD86);
+
+    func_table_register(0x008AFF, mp_008AFF);
+    func_table_register(0x00C410, mp_00C410);
+    func_table_register(0x01B5D1, mp_01B5D1);
+    func_table_register(0x01B5F4, mp_01B5F4);
+    func_table_register(0x01B60F, mp_01B60F);
+    func_table_register(0x00D514, mp_00D514);
+    func_table_register(0x00FD06, mp_00FD06);
+    func_table_register(0x00A87E, mp_00A87E);
+
     func_table_register(0x01D9A9, mp_01D9A9);
     func_table_register(0x01D7F0, mp_01D7F0);
     func_table_register(0x01D8CE, mp_01D8CE);

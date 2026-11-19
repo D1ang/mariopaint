@@ -45,6 +45,22 @@ static inline void call_jsl(uint32_t addr) {
 
 static inline void tail_jmp(uint32_t addr) { func_table_call_jsr(addr); }
 
+/* A JSR that also writes its return frame (PC of the JSR's last byte). */
+static inline void call_jsr_ret(uint32_t addr, uint16_t ret) {
+    bus_wram_write8(g_cpu.S, (uint8_t)(ret >> 8));
+    bus_wram_write8((uint16_t)(g_cpu.S - 1), (uint8_t)ret);
+    call_jsr(addr);
+}
+
+/* A JSL that also writes its return frame (PB, PC of the JSL's last byte),
+ * for callees that read their own return address from the stack. */
+static inline void call_jsl_ret(uint32_t addr, uint32_t ret) {
+    bus_wram_write8(g_cpu.S, (uint8_t)(ret >> 16));
+    bus_wram_write8((uint16_t)(g_cpu.S - 1), (uint8_t)(ret >> 8));
+    bus_wram_write8((uint16_t)(g_cpu.S - 2), (uint8_t)ret);
+    call_jsl(addr);
+}
+
 /* PHA with a 16-bit A: the high byte first, at S. */
 static inline void push_a16(uint16_t v) {
     bus_wram_write8(g_cpu.S, (uint8_t)(v >> 8));
