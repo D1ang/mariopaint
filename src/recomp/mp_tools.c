@@ -225,94 +225,93 @@ void mp_0098F8(void) {
     tail_jmp(0x00A363);
 }
 
-/* ========================================================================
- * $00:9C25 — Pencil/drawing tool handler
- *
- * Core drawing routine. Handles:
- *   - First click: save cursor pos, start drawing
- *   - Drag: track cursor movement, draw pixels
- *   - Release: end drawing, play sound
- *
- * Updates draw state at DP $20 and cursor tracking at DP $22-$28.
- * ======================================================================== */
+/* $00:9C25: the drawing tools on the canvas (tool <= 4, 7, 8), by $AE:
+ *   0, freehand ($09D4 clear): a dab at the cursor ($AAEF), the stroke
+ *      joined by $9D7D, the scratch sound while it runs, sound $18 on
+ *      release; $20 = 1 while the button is held.
+ *   0, line mode ($09D4 set): rubber-band segments ($AAFB).
+ *   1-3, shapes: corners $22/$24 and $26/$28 (the canvas saved by $8B03 at
+ *      the press, restored by $8B18 while dragging), the shape's sound at
+ *      the release, then line ($AAFB), rectangle ($AB26) or ellipse
+ *      ($AB8A); after the release $10 frames and the closing sounds. */
 void mp_009C25(void) {
-    uint16_t ae = bus_wram_read16(0x00AE);
-    if (ae != 0) {
-        func_table_call(0x009CC7);  /* Alternate draw mode */
-        return;
-    }
-
-    bus_wram_write16(0x0050, 0x0000);
-
-    uint16_t line_mode = bus_wram_read16(0x09D4);
-    if (line_mode != 0) {
-        /* Line drawing mode */
-        uint8_t draw = bus_wram_read8(0x0020);
-        if (draw == 0) {
-            bus_wram_write16(0x00BA, 0x0001);
-            bus_wram_write16(0x00BC, 0x0000);
-            bus_wram_write16(0x00BE, 0x0000);
-            /* Save start position */
-            bus_wram_write16(0x0022, bus_wram_read16(0x04DC));
-            bus_wram_write16(0x0026, bus_wram_read16(0x04DC));
-            bus_wram_write16(0x0024, bus_wram_read16(0x04DE));
-            bus_wram_write16(0x0028, bus_wram_read16(0x04DE));
-        } else {
-            /* Update line endpoint */
-            bus_wram_write16(0x0022, bus_wram_read16(0x0026));
-            bus_wram_write16(0x0024, bus_wram_read16(0x0028));
-            bus_wram_write16(0x0026, bus_wram_read16(0x04DC));
-            bus_wram_write16(0x0028, bus_wram_read16(0x04DE));
-        }
-
-        uint16_t buttons = bus_wram_read16(0x04CA);
-        uint8_t draw_state = (buttons & 0x0010) ? 1 : 0;
-        bus_wram_write8(0x0020, draw_state);
-        func_table_call(0x00AAEF);  /* Execute line draw */
-        return;
-    }
-
-    /* Normal drawing (not line mode) */
-    uint8_t draw = bus_wram_read8(0x0020);
-    if (draw == 0) {
-        bus_wram_write16(0x00BA, 0x0001);
-        bus_wram_write16(0x00BC, 0x0000);
-        bus_wram_write16(0x00BE, 0x0000);
-    }
-
-    /* Check cursor movement for drawing */
-    if (draw != 0) {
-        uint16_t movement = bus_wram_read16(0x1B26);
-        if (movement & 0x0002) {
-            /* Cursor moved while drawing */
-            func_table_call(0x009D7D);
-        } else if (!(movement & 0x0001)) {
-            /* No movement — check for continuous draw sound */
-            uint16_t tool = bus_wram_read16(0x04D0);
-            if (tool != 0x0007) {
-                op_lda_imm16(0x0001);
-                func_table_call(0x01D348);
+    uint8_t db = g_cpu.DB;
+#define R16(o)   bus_read16(db, (uint16_t)(o))
+#define W16(o,v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+#define DR(o)    bus_read16(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define DW(o,v)  bus_write16(0x00, (uint16_t)(g_cpu.DP + (o)), (uint16_t)(v))
+    if (DR(0xAE) == 0) {
+        DW(0x50, 0);
+        if (R16(0x09D4) == 0) {
+            if (DR(0x20) == 0) { DW(0xBA, 0x0001); DW(0xBC, 0); DW(0xBE, 0); }
+            if (DR(0x20) == 0 || (R16(0x1B26) & 0x0002)) {
+                call_jsr(0x009D7D);
+            } else if (!(R16(0x1B26) & 0x0001) && R16(0x04D0) != 0x0007) {
+                CPU_SET_A16(0x0001); call_jsl(0x01D348);
             }
+            uint16_t y = 0x0001;
+            if (!(R16(0x04CA) & 0x0010)) {
+                CPU_SET_A16(0x0018); call_jsl(0x01D368);
+                y = 0;
+            }
+            g_cpu.Y = y;
+            DW(0x20, y);
+            DW(0x22, R16(0x04DC));
+            DW(0x24, R16(0x04DE));
+            tail_jmp(0x00AAEF);
+            return;
         }
+        if (DR(0x20) == 0) {                                 /* $9C87: line mode */
+            DW(0xBA, 0x0001); DW(0xBC, 0); DW(0xBE, 0);
+            DW(0x22, R16(0x04DC)); DW(0x26, R16(0x04DC));
+            DW(0x24, R16(0x04DE)); DW(0x28, R16(0x04DE));
+        } else {
+            DW(0x22, DR(0x26)); DW(0x24, DR(0x28));
+            DW(0x26, R16(0x04DC)); DW(0x28, R16(0x04DE));
+        }
+        uint16_t y = (R16(0x04CA) & 0x0010) ? 1 : 0;
+        g_cpu.Y = y;
+        DW(0x20, y);
+        tail_jmp(0x00AAFB);
+        return;
+    }
+    DW(0x50, 0x0001);                                        /* $9CC7: shapes */
+    if (DR(0x20) == 0) {
+        call_jsr(0x008B03);
+        DW(0xBA, 0x0001); DW(0xBE, 0x0001);
+        DW(0x22, R16(0x04DC)); DW(0x26, R16(0x04DC));
+        DW(0x24, R16(0x04DE)); DW(0x28, R16(0x04DE));
     } else {
-        func_table_call(0x009D7D);  /* Initial draw stroke */
+        DW(0x26, R16(0x04DC)); DW(0x28, R16(0x04DE));
     }
-
-    /* Check button state */
-    uint16_t buttons = bus_wram_read16(0x04CA);
-    uint8_t new_draw = (buttons & 0x0010) ? 1 : 0;
-    if (!(buttons & 0x0010)) {
-        /* Button released — end draw, play sound */
-        op_lda_imm16(0x0018);
-        func_table_call(0x01D368);
+    uint16_t y = (R16(0x04CA) & 0x0010) ? 1 : 0;
+    g_cpu.Y = y;
+    DW(0x20, y);
+    if (y == 0) {
+        call_jsr(0x008B18);
+    } else {
+        uint16_t m = R16(0x1B26);
+        if (m & 0x0001) return;
+        if (m & 0x0008) call_jsr(0x008B18);
     }
-    bus_wram_write8(0x0020, new_draw);
-
-    /* Save cursor position for next frame */
-    bus_wram_write16(0x0022, bus_wram_read16(0x04DC));
-    bus_wram_write16(0x0024, bus_wram_read16(0x04DE));
-
-    func_table_call(0x00AAEF);  /* Pixel plot */
+    if (DR(0x20) == 0) {                                     /* released: its sound */
+        uint16_t v = DR(0xB8) ? 0x0003 : R16(0x198A);
+        uint16_t ae = DR(0xAE);
+        if (ae == 0x0003) ae--;
+        ae--;
+        CPU_SET_A16((uint16_t)((ae << 2) + v + 0x001D));
+        call_jsl(0x01D368);
+        W16(0x053B, 0x0004); W16(0x053D, 0); W16(0x053F, 0x0003);
+    }
+    uint16_t ae = DR(0xAE);
+    call_jsr(ae == 0x0002 ? 0x00AB26 : ae == 0x0003 ? 0x00AB8A : 0x00AAFB);
+    if (DR(0x20) == 0) { CPU_SET_A16(0x0010); call_jsl(0x009C1B); }
+    CPU_SET_A16(0x0001); call_jsl(0x01D348);
+    CPU_SET_A16(0x0018); call_jsl(0x01D368);
+#undef R16
+#undef W16
+#undef DR
+#undef DW
 }
 
 /* ========================================================================
