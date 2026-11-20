@@ -13,6 +13,8 @@ Output (in --out, never in the repository):
   vram/<snes address>.bin    graphics, one file per DMA source
   cgram/<snes address>.bin   palettes
   apu/<snes address>.bin     sound driver, samples and songs
+  data/<purpose>/<snes>.bin  data the code reads (pictures, tilemaps, tables),
+                             grouped by what the reading code does with it
   manifest.json              per file: kind, SNES address, ROM offset,
                              length, DMA target, SHA-1; and the ROM's SHA-1
 
@@ -29,7 +31,29 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 ROM_SHA1 = "6d93da7773b2c121bc4e7a3edc38f29f546455e2"   # Mario Paint (Europe)
-KINDS = ("vram", "cgram", "apu")
+KINDS = ("vram", "cgram", "apu", "data")
+
+# What the code that reads a data region does with it (from the C
+# translations); regions read by other code are extracted as "other".
+PURPOSE = {
+    "01EC4B": "picture",     # coloring-book pictures, copied whole to the canvas ($7E:A000)
+    "00C490": "tilemap",     # screen layouts, rows of tile words to $7E:2100
+    "00C3DE": "tilemap",     # the canvas screen's layout
+    "00C414": "tilemap",
+    "00DE8E": "tilemap",     # to $7E:28C0
+    "00DE46": "tilemap",
+    "01E93A": "tilemap",     # music editor parts
+    "00A25B": "tool",        # tool switch: per-tool graphics and colours
+    "00A22D": "tool",
+    "00B66C": "cursor",      # stamp editor / eraser cursors
+    "00B6F4": "cursor",
+    "01D259": "palette",     # the wave effect's palettes ($09AF)
+    "01962C": "animation",   # animation scripts
+    "01972D": "animation",
+    "01F91E": "steps",       # $F825 step data
+    "01F84F": "steps",
+    "00FD83": "music",       # music editor data
+}
 
 
 def main():
@@ -59,13 +83,17 @@ def main():
             back = int(snes, 16) & 0x7FFF
             off, length, snes = off - back, length + back, f"{int(snes, 16) - back:06X}"
         blob = rom[off:off + length]
-        rel = os.path.join(r["kind"], f"{snes}.bin")
+        sub = r["kind"]
+        if sub == "data":
+            sub = os.path.join("data", PURPOSE.get(r.get("reader", ""), "other"))
+        rel = os.path.join(sub, f"{snes}.bin")
         path = os.path.join(a.out, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             f.write(blob)
         files.append({"file": rel.replace(os.sep, "/"), "kind": r["kind"], "snes": snes,
                       "rom_offset": off, "length": length, "target": r.get("target"),
+                      "reader": r.get("reader"), "purpose": PURPOSE.get(r.get("reader", "")) if r["kind"] == "data" else None,
                       "sha1": hashlib.sha1(blob).hexdigest()})
         total[r["kind"]] += length
     with open(os.path.join(a.out, "manifest.json"), "w") as f:
