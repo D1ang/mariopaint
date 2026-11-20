@@ -63,6 +63,10 @@ FRAME_DRIVERS = {"018260", "01E2CE", "01E794", "01E7C9"}
 # the ROM spins (a native body cannot take the NMI mid-spin): same end
 # state, different timing, so they never run as timed intercepts.
 TIMING_SENSITIVE = set()
+# Pass under check but hang the timed loop when run natively (so not in
+# k_verified): $01:D388 native leaves the sound CPU unready for the bank
+# upload that follows ($01:DF25 then waits for it forever).
+NOT_TIMED = {"01D388"}
 
 JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
                 "009760", "009853", "00987B", "0098C3", "0098F8", "009C25", "009DAB", "009DFB",
@@ -170,7 +174,7 @@ def main():
             # the handler itself wrote (WRAM, video memory, I/O registers).
             ok = calls > 0 and mem == 0 and mx == 0 and skip == 0
             passed += ok
-            if ok and addr not in TIMING_SENSITIVE:
+            if ok and addr not in TIMING_SENSITIVE and addr not in NOT_TIMED:
                 # F: it waits for frames, so it runs as a framed intercept.
                 verified.append(addr + ("L" if kind.get(addr) == "JSL" else "") + ("F" if frames else ""))
             f.write(f"{addr} {'PASS' if ok else 'FAIL'} calls={calls} mem_fail={mem} reg_fail={reg} mx_fail={mx} "

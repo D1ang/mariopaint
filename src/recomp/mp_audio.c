@@ -220,7 +220,10 @@ void mp_01D388(void) {
     /* -: LDA $053A : BNE -  The NMI's sound handler counts it down. A
      * native body cannot take the NMI in the middle of its own loop, so it
      * waits in the ROM's loop ($D38E, on to $D393); only where it cannot
-     * (outside the timed loop) does it wait by frames instead. */
+     * (outside the timed loop) does it wait by frames instead. It passes the
+     * check, but in the timed loop the bank upload after it ($DF25) then
+     * waits for the sound CPU forever, so it is not run natively there
+     * (conformance.py NOT_TIMED). */
     if (bus_read8(g_cpu.DB, 0x053A) != 0 && !recomp_rom_wait(0x01D38E, 0x01D393))
         while (bus_read8(g_cpu.DB, 0x053A) != 0 && !g_quit)
             call_jsl(0x01E2CE);

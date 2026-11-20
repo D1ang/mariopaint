@@ -12,6 +12,8 @@
 #include <mp/functions.h>
 #include <snesrecomp/func_table.h>
 #include <mp/calls.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <mp/mem.h>
 #include <snesrecomp/snesrecomp.h>
 
@@ -2827,7 +2829,10 @@ void mp_01D39F(void) {
 #undef MB_W
 #undef MB_DP
 
+
+
 void mp_register_misc(void) {
+
     func_table_register(0x01D39F, mp_01D39F);
 
     func_table_register(0x01D287, mp_01D287);
