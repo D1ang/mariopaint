@@ -5,8 +5,9 @@
                                    [--skip-logs]
 
 1. plays every tour scenario on the genuine ROM (the launcher with
-   MP_REALFRAME, as conformance.py's oracle runs) with the ROM access
-   logger on (SNESRECOMP_ROMLOG) -> scratch/romlog/<scenario>.bin(.assets)
+   MP_REALFRAME, as conformance.py's oracle runs) and as the launcher plays
+   it (translated code on), with the ROM access logger on
+   (SNESRECOMP_ROMLOG) -> scratch/romlog/<scenario>[.timed].bin(.assets)
 2. builds the ROM catalogue from those logs (tools/rom_catalog.py)
 3. copies the assets out of the ROM into the pack (tools/extract_assets.py)
 4. converts the pack to PNG and WAV (tools/convert_assets.py)
@@ -55,13 +56,18 @@ def main():
         names = [n for n, v in canvas_tour.SCENARIOS.items() if v is not None and n not in REPEATS]
         step(f"playing {len(names)} scenarios on the ROM with the access logger")
 
-        def run(name):
-            log = os.path.join(logdir, f"{name}.bin")
-            canvas_tour.run(rom, canvas_tour.SCENARIOS[name], os.path.join(ROOT, "scratch", "romlog_runs", name),
-                            real=True, extra_env={"SNESRECOMP_ROMLOG": log})
+        def run(job):
+            # Each scenario twice: on the genuine ROM, and as the launcher
+            # plays it (translated code on), whose C code reads some bytes
+            # the ROM's code does not (a word where the ROM reads a byte).
+            name, real = job
+            log = os.path.join(logdir, f"{name}.bin" if real else f"{name}.timed.bin")
+            canvas_tour.run(rom, canvas_tour.SCENARIOS[name],
+                            os.path.join(ROOT, "scratch", "romlog_runs", name + ("" if real else ".timed")),
+                            real=real, extra_env={"SNESRECOMP_ROMLOG": log})
             return name, os.path.exists(log + ".assets")
         with ThreadPoolExecutor(a.jobs) as pool:
-            bad = [n for n, ok in pool.map(run, names) if not ok]
+            bad = [n for n, ok in pool.map(run, [(n, r) for n in names for r in (True, False)]) if not ok]
         if bad:
             sys.exit(f"make_assets: no log from {', '.join(bad)} (is the launcher built with romlog?)")
 

@@ -15,6 +15,12 @@ Output (in --out, never in the repository):
   apu/<snes address>.bin     sound driver, samples and songs
   data/<purpose>/<snes>.bin  data the code reads (pictures, tilemaps, tables),
                              grouped by what the reading code does with it
+  native/<snes>.bin          data read only by the translated C code
+  code/<snes>.bin            the code the game ran (for the emulator, which
+                             still runs part of it)
+  header/007FB0.bin          the cartridge header and vectors
+  pack.idx                   for snesrecomp: the launcher can start from
+                             the pack (give it this directory, not a ROM)
   manifest.json              per file: kind, SNES address, ROM offset,
                              length, DMA target, SHA-1; and the ROM's SHA-1
 
@@ -31,7 +37,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 ROM_SHA1 = "6d93da7773b2c121bc4e7a3edc38f29f546455e2"   # Mario Paint (Europe)
-KINDS = ("vram", "cgram", "apu", "data")
+KINDS = ("vram", "cgram", "apu", "data", "code", "native")
 
 # What the code that reads a data region does with it (from the C
 # translations); regions read by other code are extracted as "other".
@@ -96,6 +102,20 @@ def main():
                       "reader": r.get("reader"), "purpose": PURPOSE.get(r.get("reader", "")) if r["kind"] == "data" else None,
                       "sha1": hashlib.sha1(blob).hexdigest()})
         total[r["kind"]] += length
+    # The cartridge header and vectors: read by the emulator, not by game
+    # code, so not in the catalogue.
+    hdr = rom[0x7FB0:0x8000]
+    hpath = os.path.join(a.out, "header", "007FB0.bin")
+    os.makedirs(os.path.dirname(hpath), exist_ok=True)
+    open(hpath, "wb").write(hdr)
+    files.append({"file": "header/007FB0.bin", "kind": "header", "snes": "00FFB0", "rom_offset": 0x7FB0,
+                  "length": len(hdr), "target": None, "reader": None, "purpose": None,
+                  "sha1": hashlib.sha1(hdr).hexdigest()})
+    # pack.idx: what snesrecomp reads to build the ROM image from the pack.
+    with open(os.path.join(a.out, "pack.idx"), "w") as f:
+        f.write(f"size {len(rom)}\n")
+        for e in files:
+            f.write(f"{e['rom_offset']:06X} {e['length']} {e['file']}\n")
     with open(os.path.join(a.out, "manifest.json"), "w") as f:
         json.dump({"rom_sha1": sha, "files": files}, f, indent=1)
     print(f"extract_assets: {len(files)} files in {a.out}: " +

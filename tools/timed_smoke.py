@@ -6,6 +6,12 @@ ROM's run shows a picture. Conformance checks routines one call at
 a time; this checks that the native routines together still play.
 
   python3 tools/timed_smoke.py ROM [scenario ...]
+  python3 tools/timed_smoke.py PACKDIR [scenario ...]
+
+With an asset pack directory (scratch/assets) instead of the ROM, each
+screenshot must also equal the one from the ROM file's run (run that first),
+and each scenario lists the ROM bytes it read that the pack does not have
+(scratch/smoke_pack/<scenario>/pack_missing.txt).
 """
 import os, sys, subprocess, shutil
 from concurrent.futures import ThreadPoolExecutor
@@ -17,7 +23,8 @@ LIMIT = 240          # seconds: a scenario runs in well under a minute
 
 
 def run(rom, name):
-    out = os.path.join(canvas_tour.HERE, "..", "scratch", "smoke", name)
+    pack = os.path.isdir(rom)
+    out = os.path.join(canvas_tour.HERE, "..", "scratch", "smoke" + ("_pack" if pack else ""), name)
     shutil.rmtree(out, ignore_errors=True)
     os.makedirs(out, exist_ok=True)
     hung = []
@@ -31,7 +38,10 @@ def run(rom, name):
             return subprocess.CompletedProcess(args, -9, "", "")
     canvas_tour.subprocess.run = limited
     try:
-        canvas_tour.run(rom, canvas_tour.SCENARIOS[name], out, real=False)
+        # From an asset pack: snesrecomp lists the ROM bytes read that the
+        # pack does not have.
+        env = {"SNESRECOMP_PACK_REPORT": os.path.join(os.path.abspath(out), "pack_missing.txt")} if pack else None
+        canvas_tour.run(rom, canvas_tour.SCENARIOS[name], out, real=False, extra_env=env)
     finally:
         canvas_tour.subprocess.run = real_run
     want = len([p for p in canvas_tour.SCENARIOS[name] if p not in ("notitle", "sram") and p[0] != "poke"]) + 1
@@ -44,6 +54,14 @@ def run(rom, name):
         o = os.path.join(oracle, f)
         if os.path.exists(o) and colours(os.path.join(out, f)) == 1 and colours(o) > 1:
             blank.append(f)
+    if pack:
+        # The same pictures as the run from the ROM file.
+        ref = os.path.join(canvas_tour.HERE, "..", "scratch", "smoke", name)
+        for f in shots:
+            r = os.path.join(ref, f)
+            if os.path.exists(r) and f not in blank and \
+                    Image.open(r).convert("RGB").tobytes() != Image.open(os.path.join(out, f)).convert("RGB").tobytes():
+                blank.append(f)
     return name, bool(hung), len(shots), want, blank
 
 
@@ -57,7 +75,7 @@ def main():
     bad = 0
     with ThreadPoolExecutor(2) as pool:
         for name, hung, got, want, blank in pool.map(lambda n: run(rom, n), names):
-            flag = "HANG" if hung else ("SHORT" if got < want else ("BLANK" if blank else "ok"))
+            flag = "HANG" if hung else ("SHORT" if got < want else (("DIFF" if os.path.isdir(rom) else "BLANK") if blank else "ok"))
             bad += flag != "ok"
             print(f"{name:14s} {flag:5s} {got}/{want} shots" + (f", blank: {' '.join(blank[:4])}" if blank else ""),
                   flush=True)
