@@ -74,11 +74,24 @@ JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
                 # bottom-bar handlers, entered through $95E7's table
                 "009928", "00995B", "00998B", "0099E1", "009A35", "009A9E",
                 "009B63", "009B96", "009BBA", "00A4B4", "00C42A", "00C6EF",
-                "00CAD7", "00E7D9", "0096A1"]
+                "00CAD7", "00E7D9", "0096A1",
+                # the mode bar's buttons (mode 7)
+                "00D869", "00EB7A", "00CE22", "00E3F7", "00C9E3", "009734", "0096A6",
+                # bar mode 8's buttons
+                "00EAA4", "00E9A1", "00EA12", "00E848", "00EA69",
+                # the music editor's bar (mode 11)
+                "00F9A7", "00FA08", "00FEF9", "00FA65"]
 
 
+# Scenarios checked without the routines listed (see check_scenario).
+GNAT_LOOP = {"01A505", "01A5F3", "01A60E", "01C012", "01AF14", "01AFDB", "01C3C4",
+             "01B0CA", "01B153", "01B17B", "01B27D"}
+INNER = {"gnatinner": GNAT_LOOP, "gnatinner2": GNAT_LOOP, "gnatinner3": GNAT_LOOP,
+         # and once more without the pause menu, for the routines inside it
+         "gnatinner4": GNAT_LOOP | {"01C5F8", "01C622"}}
 # Scenarios checked with the jump-entered handlers alone (see check_scenario).
-HANDLERS_ALONE = {"bars", "bars2", "bars3", "titlestates"}
+HANDLERS_ALONE = {"bars", "bars2", "bars3", "titlestates",
+                  "modes", "modes2", "modes3", "modes4", "modes5", "modes6", "modes7", "patbar", "musicbar"}
 DISPATCHERS = {"008BEB", "009564", "009598", "0095E7", "018308"}
 
 
@@ -95,6 +108,10 @@ def check_scenario(rom, name):
     executed = set(re.findall(r"^PROF (\w{6}) ", r.stderr, re.M))
     spec = ",".join([a + ("L" if k == "JSL" else "") for a, k in prof if a not in FRAME_DRIVERS] +
                     [a for a in JUMP_ENTERED if a not in dict(prof)])
+    if name in INNER:
+        # The routines inside a loop that is now checked whole: without the
+        # loop (and its phases) under check, each is checked on its own.
+        spec = ",".join(x for x in spec.split(",") if x.rstrip("LF") not in INNER[name])
     if name in HANDLERS_ALONE:
         # Only the jump-entered handlers: with their dispatcher also under
         # check, a handler runs inside its call and is never checked itself.

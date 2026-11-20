@@ -128,6 +128,27 @@ SCENARIOS = {
     "bars": [(158, 212), ("wait", 60), (128, 112)],
     "bars2": [(135, 212), (15, 212), ("wait", 60), (128, 112)],
     "bars3": [MODE_BAR, (23, 212), ("wait", 120), (128, 112), ("wait", 60)],
+    # The mode bar's buttons, each from the canvas, checked alone (as bars).
+    "modes": [MODE_BAR, (55, 212), ("wait", 300), (128, 112)],
+    "modes2": [MODE_BAR, (102, 212), ("wait", 200), (128, 112)],
+    "modes3": [MODE_BAR, (129, 212), ("wait", 200), (128, 112)],
+    "modes4": [MODE_BAR, (150, 212), ("wait", 200), (128, 112)],
+    "modes5": [MODE_BAR, (168, 212), ("wait", 200), (128, 112)],
+    "modes6": [MODE_BAR, (192, 212), ("wait", 100), (128, 112), ("wait", 60)],
+    "modes7": [MODE_BAR, (216, 212), ("wait", 200), (128, 112)],
+    # Bar mode 8 (from the animation player's 64-79), its buttons, checked
+    # alone like the bars above.
+    "patbar": [MODE_BAR, (80, 212), (80, 56), (128, 112), ("drag", 40, 40, 100, 90), (232, 212),
+               ("wait", 100), (76, 212), ("wait", 200), (40, 212), ("wait", 60), (112, 212), ("wait", 60),
+               (200, 212), ("wait", 60), (216, 212), ("wait", 60), (15, 212), ("wait", 60)],
+    # The music editor's bar (music2's clicks), its buttons checked alone.
+    "musicbar": None,
+    # Gnat Attack again (gnatwaves, gnat, gnatpause) with its game loop and phases not
+    # under check, so the routines inside them are checked one by one.
+    "gnatinner": None,
+    "gnatinner2": None,
+    "gnatinner3": None,
+    "gnatinner4": None,
     # The title clicks again, checked with the title states alone (their
     # dispatcher $01:8308 not under check).
     "titlestates": None,
@@ -135,6 +156,11 @@ SCENARIOS = {
 
 
 SCENARIOS["titlestates"] = SCENARIOS["title"]
+SCENARIOS["musicbar"] = SCENARIOS["music2"]
+SCENARIOS["gnatinner"] = SCENARIOS["gnatwaves"]
+SCENARIOS["gnatinner2"] = SCENARIOS["gnat"]
+SCENARIOS["gnatinner3"] = SCENARIOS["gnatpause"]
+SCENARIOS["gnatinner4"] = SCENARIOS["gnatpause"]
 
 SRAM_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scratch", "sram", "saved.srm")
 

@@ -1717,7 +1717,515 @@ void mp_01EBB5(void) {
     }
 }
 
+/* ---- The mode bar's buttons ($95EE ids from mode 7) and their helpers. */
+#define MB_R(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+#define MB_W(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+#define MB_DP(o)    ((uint16_t)(g_cpu.DP + (o)))
+
+static void mb_sound(uint16_t n) { CPU_SET_A16(n); call_jsl(0x01D368); }
+static void mb_cdE1(uint16_t a) { CPU_SET_A16(a); call_jsl(0x01CDE1); }
+
+/* PHA; JSL $01F825; PLA; DEC; (CMP #stop;) BPL: frames of $F825 for
+ * a, a-1, .. down to stop. */
+static void mb_f825_down(uint16_t a, uint16_t stop) {
+    do {
+        push_a16(a);
+        CPU_SET_A16(a);
+        call_jsl(0x01F825);
+        a = bus_wram_read16((uint16_t)(g_cpu.S + 1));
+        g_cpu.S = (uint16_t)(g_cpu.S + 2);
+        a--;
+    } while (!((uint16_t)(a - stop) & 0x8000));
+    CPU_SET_A16(a);
+}
+
+static void mb_tiles(uint16_t dst, uint16_t src, uint16_t rows) {
+    push_a16(dst); push_a16(src); push_a16(rows);
+    call_jsr(0x00C490);
+}
+
+static void mb_tool(uint16_t t) {
+    bus_write16(0x00, MB_DP(0xAA), t);
+    call_tool_switch(t, 0, 0);
+}
+
+/* $00:E2CC: the tool's cursor colours: 8 rows of 4 words from the table at
+ * $E2F5 + (tool high byte)*4 into $1CAA/$1CBA (skipping every other $10). */
+void mp_00E2CC(void) {
+    uint16_t x = (uint16_t)(((MB_R(0x04D0) & 0xFF00) >> 8) << 2);
+    uint16_t y = 0x006E;
+    do {
+        MB_W(0x1CAA + y, bus_read16(0x00, (uint16_t)(0xE2F5 + x)));
+        MB_W(0x1CBA + y, bus_read16(0x00, (uint16_t)(0xE2F7 + x)));
+        y = (uint16_t)(y - 2);
+        if (y & 0x0010) y = (uint16_t)(y - 0x10);
+    } while (y != 0);
+    g_cpu.X = x; g_cpu.Y = 0;
+    CPU_SET_A16(0);
+}
+
+/* $00:DE46: the undo-dog screen's tiles ($02:B180 -> $7E:28C0), $101C
+ * cleared, a frame, then the 10 sprite words from $DE7B into $0182. */
+void mp_00DE46(void) {
+    for (int x = 0x057E; x >= 0; x -= 2)
+        bus_write16(0x7E, (uint16_t)(0x28C0 + x), bus_read16(0x02, (uint16_t)(0xB180 + x)));
+    for (int x = 0x007E; x >= 0; x -= 2) MB_W(0x101C + x, 0);
+    call_jsl(0x01DEB2);
+    call_jsl(0x01E2CE);
+    MB_W(0x0202, 0);
+    for (int x = 0x0012; x >= 0; x -= 2) MB_W(0x0182 + x, bus_read16(0x00, (uint16_t)(0xDE7B + x)));
+    MB_W(0x0202, MB_R(0x0202) + 1);
+    g_cpu.X = 0xFFFE;
+}
+
+/* $00:D869 (mode bar 48-63): tool $0B (the old one kept in $101A, $A6 in
+ * $1126), its tiles and cursor colours, bar mode $0A, the screen of $DE46,
+ * three steps of $F825, state $15 (the old in $09D8). */
+void mp_00D869(void) {
+    uint8_t p0 = cpu_get_p();
+    CPU_SET_A16(0x0006); call_jsl(0x01D2BF);
+    mb_sound(0x0002);
+    call_jsl(0x01E06F);
+    MB_W(0x1992, 0);
+    MB_W(0x101A, MB_R(0x04D0));
+    MB_W(0x04D0, 0x000B);
+    MB_W(0x1126, bus_read16(0x00, MB_DP(0xA6)));
+    bus_write16(0x00, MB_DP(0xA6), 0x0100);
+    MB_W(0x1124, 0);
+    bus_write16(0x00, MB_DP(0x20), 0x0001);
+    MB_W(0x1996, 0);
+    mb_cdE1(0xCF16);
+    call_jsr(0x00C414);
+    call_jsl(0x01DE97);
+    call_jsr(0x00E2CC);
+    call_jsr(0x00A363);
+    mb_tool(0x000A);
+    bus_write8(g_cpu.DB, 0x010E, 0x66);
+    CPU_SET_A16(0x3DFF); call_jsl(0x01E033);
+    call_jsr(0x00DE46);
+    mb_f825_down(0x003E, 0x003C);
+    MB_W(0x09D8, MB_R(0x09D6));
+    MB_W(0x09D6, 0x0015);
+    CPU_SET_A16(0x0015);
+    cpu_set_p(p0);
+}
+
+/* $00:CE22 (mode bar 120-135): into the save/load menu: tool $11 (the old
+ * in $1976), the save check $D6D3, its screen (tiles $02:B700 -> $7E:2100,
+ * 20 rows; the row at $CEC0 -> $7E:2040), bar mode $0C, $F825 counts,
+ * state 6. */
+void mp_00CE22(void) {
+    mb_sound(0x0006);
+    MB_W(0x1976, MB_R(0x04D0));
+    MB_W(0x04D0, 0x0011);
+    call_jsr(0x009378);
+    MB_W(0x09D8, MB_R(0x09D6));
+    call_jsl(0x00D6D3);
+    CPU_SET_A16(0x0018); call_jsl(0x01F825);
+    if (MB_R(0x1982) != 0) { MB_W(0x1AD5, 0xFFFF); MB_W(0x1984, 0); MB_W(0x1986, 0); }
+    MB_W(0x09AD, MB_R(0x1012));
+    call_jsr(0x00C414);
+    mb_cdE1(0xCF16);
+    mb_cdE1(0xCE74);
+    mb_tiles(0x2100, 0xB700, 0x0014);
+    for (int x = 0x007E; x >= 0; x -= 2)
+        bus_write16(0x7E, (uint16_t)(0x2040 + x), bus_read16(0x00, (uint16_t)(0xCEC0 + x)));
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    mb_tool(0x000C);
+    mb_f825_down(0x000D, 0x000A);
+    CPU_SET_A16(0x0030); call_jsl(0x01F825);
+    MB_W(0x09D6, 0x0006);
+    CPU_SET_A16(0x0006);
+    g_cpu.X = 0xFFFE;
+}
+
+/* $00:C9E3 (mode bar 160-175): its frame (tiles $02:A7C0 -> $7E:2100,
+ * 19 rows), $F825 for 9..0, three sprite rows around $04C4 hidden, bar
+ * mode $0D, tool 9 (the old in $1B12), state 1. */
+void mp_00C9E3(void) {
+    mb_sound(0x0006);
+    mb_cdE1(0xCFA9);
+    mb_tiles(0x2100, 0xA7C0, 0x0013);
+    mb_f825_down(0x0009, 0x0000);
+    uint16_t k = MB_R(0x04C4);
+    MB_W(0x1A15 + (uint16_t)((k + 1) << 3), 0xFFFF);
+    MB_W(0x1A15 + (uint16_t)((k + 4) << 3), 0x01FF);
+    uint16_t x = (uint16_t)((MB_R(0x04C4) + 7) << 3);
+    MB_W(0x1A15 + x, 0xFFFF);
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    MB_W(0x1B18, MB_R(0x1B18) + 1);
+    mb_tool(0x000D);
+    MB_W(0x09AB, MB_R(0x09AB) + 1);
+    call_jsr(0x00A363);
+    MB_W(0x1B12, MB_R(0x04D0));
+    MB_W(0x04D0, 0x0009);
+    MB_W(0x09D8, MB_R(0x09D6));
+    MB_W(0x09D6, 0x0001);
+    CPU_SET_A16(0x0001);
+    g_cpu.X = x;
+}
+
+/* $00:9734 (mode bar 184-199): unless $19FA, layers $011A = 6 until a
+ * click, then back to $13. */
+void mp_009734(void) {
+    uint8_t p0 = cpu_get_p();
+    mb_sound(0x0006);
+    if (MB_R(0x19FA) == 0) {
+        op_sep(0x20);
+        bus_write8(g_cpu.DB, 0x011A, 0x06);
+        do call_jsl(0x01E2CE); while (!(bus_read8(g_cpu.DB, 0x04CA) & 0x20));
+        CPU_SET_A8(0x06); call_jsl(0x01D368);
+        bus_write8(g_cpu.DB, 0x011A, 0x13);
+        CPU_SET_A8(0x13);
+    }
+    cpu_set_p(p0);
+}
+
+/* $00:96A6 (mode bar 208-223): Gnat Attack ($01:9F6C). */
+void mp_0096A6(void) { call_jsl(0x019F6C); }
+#undef MB_R
+#undef MB_W
+#undef MB_DP
+
+#define MB_R(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+#define MB_W(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+#define MB_DP(o)    ((uint16_t)(g_cpu.DP + (o)))
+/* $00:EB7A (mode bar 96-111): into the music editor (bar mode $0B): the music sound bank
+ * ($1C, after the sound CPU answers), tool 3 (the old in $09DC; the copy
+ * flip $0997 kept in $0EB0, $A6 in $09DE), its screen and staff ($FE9E,
+ * $FD18, $FB5C, $FCF4, $FE54; tiles $02:BC00 -> $7E:2100, 20 rows; the
+ * markers $FB47), state $1E, tool $0D, bar mode $0B with the song's
+ * length + 1. */
+void mp_00EB7A(void) {
+    uint8_t p0 = cpu_get_p();
+    mb_sound(0x0006);
+    op_sep(0x20);
+    call_jsl(0x01D388);
+    call_jsl(0x01E30E);
+    bus_write8(0x00, MB_DP(0xCC), 0x00);
+    bus_write8(0x00, MB_DP(0xCD), 0x80);
+    bus_write8(0x00, MB_DP(0xCE), 0x1C);
+    bus_write8(g_cpu.DB, 0x2140, 0xFF);
+    CPU_SET_A8(0xFF);
+    call_jsl(0x01DF25);
+    for (int n = 0; n < 24000; n++) {                       /* until the sound CPU answers */
+        bus_write8(g_cpu.DB, 0x2140, 0x01);
+        if (bus_read8(g_cpu.DB, 0x2140) == 0x01 || !recomp_timed_spin(64)) break;
+    }
+    op_rep(0x20);
+    call_jsl(0x01E2F3);
+    MB_W(0x0206, 0);
+    call_jsl(0x01E06F);
+    MB_W(0x1992, 0); MB_W(0x0EB6, 0); MB_W(0x09E0, 0);
+    MB_W(0x09DC, MB_R(0x04D0));
+    MB_W(0x04D0, 0x0003);
+    MB_W(0x0E8C, 0x0003);
+    MB_W(0x0EB4, 0x0003);
+    MB_W(0x0EB0, MB_R(0x0997));
+    MB_W(0x0997, 0);
+    MB_W(0x09DE, bus_read16(0x00, MB_DP(0xA6)));
+    bus_write16(0x00, MB_DP(0xA6), 0x0070);
+    MB_W(0x0EB2, 0);
+    call_jsr(0x00C414);
+    mb_cdE1(0xCF65);
+    bus_write8(g_cpu.DB, 0x010E, 0x66);
+    MB_W(0x0EA2, 0x0004);
+    call_jsr(0x00FE9E);
+    MB_W(0x0446, 0x0004);
+    call_jsr(0x00FD18);
+    call_jsr(0x00FB5C);
+    call_jsr(0x00FCF4);
+    call_jsr(0x00FE54);
+    mb_tiles(0x2100, 0xBC00, 0x0014);
+    if (MB_R(0x0C26) != 0) { CPU_SET_A16(0x0C36); g_cpu.X = 0x0554; g_cpu.Y = 0x0003; call_jsr(0x00FB47); }
+    CPU_SET_A16(0x0C30); g_cpu.X = 0x0544; g_cpu.Y = 0x0003; call_jsr(0x00FB47);
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    MB_W(0x09D8, MB_R(0x09D6));
+    MB_W(0x09D6, 0x001E);
+    bus_write16(0x00, MB_DP(0xA8), 0);
+    call_jsr(0x0096E1);
+    call_jsr(0x00A363);
+    MB_W(0x04D0, 0x000D);
+    CPU_SET_A16(0x004D); call_jsl(0x01F825);
+    MB_W(0x0E8E, MB_R(0x0E8E) + 1);
+    uint16_t len = (uint16_t)(MB_R(0x0C32) + 1);
+    bus_write16(0x00, MB_DP(0xAA), 0x000B);
+    call_tool_switch(0x000B, 1, &len);
+    cpu_set_p(p0);
+}
+
+/* $00:E3F7 (mode bar 144-159): tool 9 (the old in $1010), its screen (tiles $02:AC80 -> $7E:2100, 20 rows), $F825 for
+ * $4C..$3F, the frame-count sprites for $1012 frames (row from $E4B5),
+ * $1014 = $20, state $1D, bar mode $0E; then $A363. */
+void mp_00E3F7(void) {
+    mb_sound(0x0006);
+    call_jsl(0x01E06F);
+    MB_W(0x1010, MB_R(0x04D0));
+    MB_W(0x04D0, 0x0009);
+    call_jsr(0x009378);
+    mb_cdE1(0xCE9D);
+    mb_tiles(0x2100, 0xAC80, 0x0014);
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    mb_f825_down(0x004C, 0x003F);
+    uint16_t x = (uint16_t)(((MB_R(0x1012) + 0x003F) << 3) & 0x00FF);
+    MB_W(0x1A15 + x, 0x01FF);
+    x = bus_read8(0x00, (uint16_t)(0xE4B5 + MB_R(0x1012)));
+    MB_W(0x1A15 + x, 0xFFFF);
+    MB_W(0x1A3D, 0xFFFF);
+    if (x == 0x0048) {
+        MB_W(0x1A65, 0x00FF);
+        MB_W(0x1A6D, 0x00FF);
+        MB_W(0x1A66, 0x000A);
+        MB_W(0x1A6E, 0x0014);
+    }
+    if (MB_R(0x1012) != 0) { MB_W(0x1A45, 0x02FF); MB_W(0x1A4D, 0x02FF); MB_W(0x1A55, 0x02FF); }
+    MB_W(0x1014, 0x0020);
+    MB_W(0x09D8, MB_R(0x09D6));
+    MB_W(0x09D6, 0x001D);
+    mb_tool(0x000E);
+    MB_W(0x09AB, MB_R(0x09AB) + 1);
+    tail_jmp(0x00A363);
+}
+#undef MB_R
+#undef MB_W
+#undef MB_DP
+
+#define MB_R(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+#define MB_W(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+#define MB_DP(o)    ((uint16_t)(g_cpu.DP + (o)))
+/* ---- Bar mode 8 (reached from the animation player bar's 64-79): $AC =
+ * the slot clicked (1-based), $0EBA a page, $0EBC a byte whose high nibble
+ * comes from the tables at $EA06 / $EA5C, $EB3B the tool word for it. */
+static uint16_t pb_dp(uint16_t o) { return bus_read16(0x00, MB_DP(o)); }
+static void pb_pattern(uint16_t table, uint16_t x) {
+    uint16_t v = bus_read8(0x00, (uint16_t)(table + x));
+    MB_W(0x0EBC, (uint16_t)((MB_R(0x0EBC) & 0x000F) | v));
+}
+static void pb_pick(void) {
+    MB_W(0x04D0, 0x0003);
+    MB_W(0x1992, 0);
+}
+
+/* $00:E9A1 (8-47): a page button: sound $42 on the first, $0A else; when
+ * the page changes, the pattern's high nibble for it; the tool switch with
+ * the tool word and the page; $96E1, $A363. */
+void mp_00E9A1(void) {
+    uint16_t slot = (uint16_t)(pb_dp(0xAC) - 1);
+    mb_sound(slot == 0 ? 0x0042 : 0x000A);
+    pb_pick();
+    MB_W(0x0EB8, 0x0001);
+    if ((uint16_t)(pb_dp(0xAC) - 1) != MB_R(0x0EBA)) {
+        call_jsr(0x00EB3B);
+        uint16_t x = g_cpu.X;
+        if (MB_R(0x0EBA) == 0) x = (uint16_t)(x + 5);
+        pb_pattern(0xEA06, x);
+    }
+    MB_W(0x0EBA, (uint16_t)(pb_dp(0xAC) - 1));
+    call_jsr(0x00EB3B);
+    uint16_t w[2] = { CPU_A16(), MB_R(0x0EBA) };
+    call_tool_switch(pb_dp(0xAA), 2, w);
+    call_jsr(0x0096E1);
+    tail_jmp(0x00A363);
+}
+
+/* $00:EA12 (104-183): a pattern slot: sound $0C, its high nibble ($EA5C,
+ * +5 on page 1), the tool switch, $96E1, $A363. */
+void mp_00EA12(void) {
+    pb_pick();
+    MB_W(0x0EB8, 0x0001);
+    mb_sound(0x000C);
+    uint16_t x = pb_dp(0xAC);
+    if (MB_R(0x0EBA) != 0) x = (uint16_t)(x + 5);
+    g_cpu.X = x;
+    pb_pattern(0xEA5C, x);
+    call_jsr(0x00EB3B);
+    uint16_t w[2] = { CPU_A16(), MB_R(0x0EBA) };
+    call_tool_switch(pb_dp(0xAA), 2, w);
+    call_jsr(0x0096E1);
+    tail_jmp(0x00A363);
+}
+
+/* $00:E848 (192-207): the plain pen: $0EB8 = -1, the tool switch with
+ * three words (tool word, 7, page). */
+void mp_00E848(void) {
+    mb_sound(0x000C);
+    pb_pick();
+    MB_W(0x0EB8, 0xFFFF);
+    call_jsr(0x00EB3B);
+    uint16_t w[3] = { CPU_A16(), 0x0007, MB_R(0x0EBA) };
+    call_tool_switch(pb_dp(0xAA), 3, w);
+    call_jsr(0x0096E1);
+    tail_jmp(0x00A363);
+}
+
+/* $00:EA69 (208-223): the eraser menu ($1992 = 1, tool 7, $B66C/$B6F4
+ * cursor, $A525), tool switch with 8 and the page. */
+void mp_00EA69(void) {
+    mb_sound(0x0007);
+    MB_W(0x1992, 0x0001);
+    CPU_SET_A16(0x000F); call_jsr(0x00B66C);
+    CPU_SET_A16((uint16_t)(MB_R(0x1994) + 8)); call_jsr(0x00B6F4);
+    MB_W(0x04D0, 0x0007);
+    call_jsr(0x00A525);
+    uint16_t w[2] = { 0x0008, MB_R(0x0EBA) };
+    call_tool_switch(pb_dp(0xAA), 2, w);
+    tail_jmp(0x00A363);
+}
+
+/* $00:EAA4 (8-23 in the pattern bar): back: sound $41, the tool saved in
+ * $0EC0 ($0EC2 to $B8); the eraser menu again for tool 7, else the
+ * stamp/pattern size ($A8, $96E1); the tool switch (4 with the stamp
+ * $19C0 for tool 6 when $19FA, 4 without, else 7), $A451, $A525, $A363. */
+void mp_00EAA4(void) {
+    mb_sound(0x0041);
+    MB_W(0x0EB8, 0);
+    MB_W(0x1992, 0);
+    bus_write16(0x00, MB_DP(0xB8), MB_R(0x0EC2));
+    MB_W(0x04D0, MB_R(0x0EC0));
+    if ((MB_R(0x04D0) & 0x00FF) == 0x0007) {
+        MB_W(0x1992, MB_R(0x1992) + 1);
+        CPU_SET_A16(0x000F); call_jsr(0x00B66C);
+        CPU_SET_A16((uint16_t)(MB_R(0x1994) + 8)); call_jsr(0x00B6F4);
+    } else {
+        bus_write16(0x00, MB_DP(0xA8), (uint16_t)(MB_R(0x04D0) & 0xFF00));
+        call_jsr(0x0096E1);
+    }
+    g_cpu.Y = MB_R(0x19FA);
+    if (g_cpu.Y != 0) {
+        bus_write16(0x00, MB_DP(0xAA), 0x0004);
+        if ((MB_R(0x04D0) & 0x00FF) == 0x0006) { uint16_t w = MB_R(0x19C0); call_tool_switch(0x0004, 1, &w); }
+        else call_tool_switch(0x0004, 0, 0);
+    } else {
+        bus_write16(0x00, MB_DP(0xAA), 0x0007);
+        call_tool_switch(0x0007, 0, 0);
+    }
+    call_jsr(0x00A451);
+    call_jsr(0x00A525);
+    if (MB_R(0x04D0) == 0x0006) MB_W(0x09AB, MB_R(0x09AB) + 1);
+    tail_jmp(0x00A363);
+}
+
+/* $00:969C (mode 15): $01:D409. */
+void mp_00969C(void) { call_jsl(0x01D409); }
+#undef MB_R
+#undef MB_W
+#undef MB_DP
+
+#define MB_R(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+#define MB_W(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+#define MB_DP(o)    ((uint16_t)(g_cpu.DP + (o)))
+/* ---- The music editor's bar (mode 11). Each acts on a click ($04CA bit
+ * 5); $AC = the slot clicked (1-based). */
+static bool mu_click(void) {
+    uint16_t a = MB_R(0x04CA);
+    CPU_SET_A16(a);
+    return (a & 0x0020) != 0;
+}
+/* The marker for the song or the loop ($0C26), redrawn by $FB47. */
+static void mu_marker(void) {
+    CPU_SET_A16(MB_R(0x0C26) != 0 ? 0x0C36 : 0x0C16);
+    g_cpu.X = 0x0554; g_cpu.Y = 0x0003;
+    call_jsr(0x00FB47);
+}
+
+/* $00:F9A7 (40-55): to tool $0F (the old in $0EB4), $1C2A..$1D29
+ * cleared, $E64F, the tool switch with the song length + 1 and 0 (and
+ * $0EB6 + 2 when set). */
+void mp_00F9A7(void) {
+    call_jsl(0x01E2F3);
+    if (!mu_click()) return;
+    mb_sound(0x0002);
+    uint16_t a = MB_R(0x0E8C);
+    if (a == 0x000F) { CPU_SET_A16(a); return; }
+    MB_W(0x0EB4, a);
+    MB_W(0x0E8C, 0x000F);
+    for (int x = 0x00FE; x >= 0; x -= 2) MB_W(0x1C2A + x, 0);
+    call_jsr(0x00E64F);
+    uint16_t sel = MB_R(0x0EB6);
+    uint16_t len = (uint16_t)(MB_R(0x0C32) + 1);
+    if (sel == 0) {
+        uint16_t w[2] = { len, 0x0000 };
+        call_tool_switch(bus_read16(0x00, MB_DP(0xAA)), 2, w);
+    } else {
+        uint16_t w[3] = { (uint16_t)(sel + 2), len, 0x0000 };
+        call_tool_switch(bus_read16(0x00, MB_DP(0xAA)), 3, w);
+    }
+}
+
+/* $00:FA08 (80-111): the song length = slot - 2 (sound 7 for 0, 8
+ * else), then $FA35 and $FD18. */
+void mp_00FA08(void) {
+    if (!mu_click()) return;
+    MB_W(0x0EB6, 0);
+    uint16_t v = (uint16_t)(bus_read16(0x00, MB_DP(0xAC)) - 2);
+    MB_W(0x0C32, v);
+    mb_sound(v == 0 ? 0x0007 : 0x0008);
+    call_jsr(0x00FA35);
+    call_jsr(0x00FD18);
+}
+
+/* $00:FEF9 (136-199): $0EB6 = slot - 3 (sound $0D, $FCF4 first), $E93A,
+ * the marker, $DE97, then $FD18. */
+void mp_00FEF9(void) {
+    if (!mu_click()) return;
+    mb_sound(0x000D);
+    call_jsr(0x00FCF4);
+    MB_W(0x0EB6, (uint16_t)(bus_read16(0x00, MB_DP(0xAC)) - 3));
+    call_jsl(0x01E93A);
+    mu_marker();
+    call_jsl(0x01DE97);
+    tail_jmp(0x00FD18);
+}
+
+/* $00:FA65 (216-231): $0EB6 = 0, sound 4, the tool switch with 6, $FD06,
+ * $FD18, a frame, the marker, $DE97, a frame, $FA35. */
+void mp_00FA65(void) {
+    call_jsl(0x01E2F3);
+    if (!mu_click()) return;
+    MB_W(0x0EB6, 0);
+    mb_sound(0x0004);
+    uint16_t w = 0x0006;
+    call_tool_switch(bus_read16(0x00, MB_DP(0xAA)), 1, &w);
+    call_jsr(0x00FD06);
+    call_jsr(0x00FD18);
+    call_jsl(0x01E2CE);
+    mu_marker();
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    call_jsr(0x00FA35);
+}
+#undef MB_R
+#undef MB_W
+#undef MB_DP
+
 void mp_register_misc(void) {
+    func_table_register(0x00F9A7, mp_00F9A7);
+    func_table_register(0x00FA08, mp_00FA08);
+    func_table_register(0x00FEF9, mp_00FEF9);
+    func_table_register(0x00FA65, mp_00FA65);
+
+    func_table_register(0x00E9A1, mp_00E9A1);
+    func_table_register(0x00EA12, mp_00EA12);
+    func_table_register(0x00E848, mp_00E848);
+    func_table_register(0x00EA69, mp_00EA69);
+    func_table_register(0x00EAA4, mp_00EAA4);
+    func_table_register(0x00969C, mp_00969C);
+
+    func_table_register(0x00EB7A, mp_00EB7A);
+    func_table_register(0x00E3F7, mp_00E3F7);
+
+    func_table_register(0x00E2CC, mp_00E2CC);
+    func_table_register(0x00DE46, mp_00DE46);
+    func_table_register(0x00D869, mp_00D869);
+    func_table_register(0x00CE22, mp_00CE22);
+    func_table_register(0x00C9E3, mp_00C9E3);
+    func_table_register(0x009734, mp_009734);
+    func_table_register(0x0096A6, mp_0096A6);
+
     func_table_register(0x01EBB5, mp_01EBB5);
 
     func_table_register(0x01F03A, mp_01F03A);
