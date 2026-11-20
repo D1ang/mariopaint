@@ -141,6 +141,23 @@ SCENARIOS = {
     "patbar": [MODE_BAR, (80, 212), (80, 56), (128, 112), ("drag", 40, 40, 100, 90), (232, 212),
                ("wait", 100), (76, 212), ("wait", 200), (40, 212), ("wait", 60), (112, 212), ("wait", 60),
                (200, 212), ("wait", 60), (216, 212), ("wait", 60), (15, 212), ("wait", 60)],
+    # The stamp editor's top bar ($9598 table $95C2): a page, and the
+    # picture effects (x 120 $A55B, 144 $A637, 152 $A6F7, 168 $A792,
+    # 184 $A8A8, 192 $A8FF, 208 $A95D, 224 $A9BE, 128 $A617), one each,
+    # checked alone.
+    "stampfx": [(192, 212), (40, 8), ("wait", 30), (120, 8), ("wait", 120)],
+    "stampfx2": [(192, 212), (144, 8), ("wait", 600)],
+    "stampfx3": [(192, 212), (152, 8), ("wait", 900)],
+    "stampfx4": [(192, 212), (168, 8), ("wait", 350)],
+    "stampfx5": [(192, 212), (184, 8), ("wait", 150)],
+    "stampfx6": [(192, 212), (192, 8), ("wait", 150)],
+    "stampfx7": [(192, 212), (208, 8), ("wait", 100)],
+    "stampfx8": [(192, 212), (224, 8), ("wait", 300)],
+    "stampfx9": [(192, 212), (128, 8), ("wait", 900)],
+    # The wave again with its callers left out, for the routines in it.
+    "waveinner": None,
+    # The rocket again with its callers left out, for the routines in it.
+    "rocketinner": None,
     # The music editor's bar (music2's clicks), its buttons checked alone.
     "musicbar": None,
     # Gnat Attack again (gnatwaves, gnat, gnatpause) with its game loop and phases not
@@ -157,6 +174,8 @@ SCENARIOS = {
 
 SCENARIOS["titlestates"] = SCENARIOS["title"]
 SCENARIOS["musicbar"] = SCENARIOS["music2"]
+SCENARIOS["rocketinner"] = SCENARIOS["stampfx8"]
+SCENARIOS["waveinner"] = SCENARIOS["stampfx9"]
 SCENARIOS["gnatinner"] = SCENARIOS["gnatwaves"]
 SCENARIOS["gnatinner2"] = SCENARIOS["gnat"]
 SCENARIOS["gnatinner3"] = SCENARIOS["gnatpause"]

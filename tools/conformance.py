@@ -62,7 +62,7 @@ FRAME_DRIVERS = {"018260", "01E2CE", "01E794", "01E7C9"}
 # Native bodies that wait for an interrupt-driven variable by frames where
 # the ROM spins (a native body cannot take the NMI mid-spin): same end
 # state, different timing, so they never run as timed intercepts.
-TIMING_SENSITIVE = {"01D388"}
+TIMING_SENSITIVE = set()
 
 JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
                 "009760", "009853", "00987B", "0098C3", "0098F8", "009C25", "009DAB", "009DFB",
@@ -80,7 +80,9 @@ JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
                 # bar mode 8's buttons
                 "00EAA4", "00E9A1", "00EA12", "00E848", "00EA69",
                 # the music editor's bar (mode 11)
-                "00F9A7", "00FA08", "00FEF9", "00FA65"]
+                "00F9A7", "00FA08", "00FEF9", "00FA65",
+                # the stamp editor's top bar
+                "00A509", "00A55B", "00A637", "00A6F7", "00A792", "00A8A8", "00A8FF", "00A95D", "00A9BE", "00A617"]
 
 
 # Scenarios checked without the routines listed (see check_scenario).
@@ -88,10 +90,15 @@ GNAT_LOOP = {"01A505", "01A5F3", "01A60E", "01C012", "01AF14", "01AFDB", "01C3C4
              "01B0CA", "01B153", "01B17B", "01B27D"}
 INNER = {"gnatinner": GNAT_LOOP, "gnatinner2": GNAT_LOOP, "gnatinner3": GNAT_LOOP,
          # and once more without the pause menu, for the routines inside it
-         "gnatinner4": GNAT_LOOP | {"01C5F8", "01C622"}}
+         "gnatinner4": GNAT_LOOP | {"01C5F8", "01C622"},
+         # the rocket ($A9BE) with the clicks that lead to it
+         "rocketinner": {"0087A8", "008BEB", "008BA9", "009598", "00A9BE"},
+         # the wave ($A617, $01:CFD5) likewise
+         "waveinner": {"0087A8", "008BEB", "008BA9", "009598", "00A617", "01CFD5"}}
 # Scenarios checked with the jump-entered handlers alone (see check_scenario).
 HANDLERS_ALONE = {"bars", "bars2", "bars3", "titlestates",
-                  "modes", "modes2", "modes3", "modes4", "modes5", "modes6", "modes7", "patbar", "musicbar"}
+                  "modes", "modes2", "modes3", "modes4", "modes5", "modes6", "modes7", "patbar", "musicbar",
+                  "stampfx", "stampfx2", "stampfx3", "stampfx4", "stampfx5", "stampfx6", "stampfx7", "stampfx8", "stampfx9"}
 DISPATCHERS = {"008BEB", "009564", "009598", "0095E7", "018308"}
 
 

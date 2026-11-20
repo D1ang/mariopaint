@@ -217,15 +217,13 @@ void mp_01D2BF(void) {
 void mp_01D388(void) {
     CPU_SET_A8(0x00);
     call_jsl(0x01D2BF);
-    /* -: LDA $053A : BNE -  (the NMI counts it down) */
-    /* -: LDA $053A : BNE -  The ROM spins until the NMI's sound handler
-     * counts it down. A native body cannot take the NMI in the middle of
-     * its spin (it runs inside one instruction of the emulated CPU), so it
-     * waits by frames instead: the same end state, more frames. That makes
-     * this routine timing-sensitive (conformance.py keeps it out of
-     * k_verified; the interpreter runs the genuine spin in the timed loop). */
-    while (bus_read8(g_cpu.DB, 0x053A) != 0 && !g_quit)
-        call_jsl(0x01E2CE);
+    /* -: LDA $053A : BNE -  The NMI's sound handler counts it down. A
+     * native body cannot take the NMI in the middle of its own loop, so it
+     * waits in the ROM's loop ($D38E, on to $D393); only where it cannot
+     * (outside the timed loop) does it wait by frames instead. */
+    if (bus_read8(g_cpu.DB, 0x053A) != 0 && !recomp_rom_wait(0x01D38E, 0x01D393))
+        while (bus_read8(g_cpu.DB, 0x053A) != 0 && !g_quit)
+            call_jsl(0x01E2CE);
     for (uint8_t n = 0x12; n; n--) {
         CPU_SET_A8(n);
         call_jsl(0x01E2CE);

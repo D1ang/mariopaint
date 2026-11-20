@@ -1722,6 +1722,12 @@ void mp_01EBB5(void) {
 #define MB_W(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
 #define MB_DP(o)    ((uint16_t)(g_cpu.DP + (o)))
 
+/* PHP / PLP kept on the stack, as the ROM does: a body that waits for a
+ * frame between them resumes on the genuine machine's stack, where its own
+ * pushes must sit at the ROM's depth. */
+static void mb_php(void) { bus_wram_write8(g_cpu.S, cpu_get_p()); g_cpu.S = (uint16_t)(g_cpu.S - 1); }
+static void mb_plp(void) { g_cpu.S = (uint16_t)(g_cpu.S + 1); cpu_set_p(bus_wram_read8(g_cpu.S)); }
+
 static void mb_sound(uint16_t n) { CPU_SET_A16(n); call_jsl(0x01D368); }
 static void mb_cdE1(uint16_t a) { CPU_SET_A16(a); call_jsl(0x01CDE1); }
 
@@ -1782,7 +1788,7 @@ void mp_00DE46(void) {
  * $1126), its tiles and cursor colours, bar mode $0A, the screen of $DE46,
  * three steps of $F825, state $15 (the old in $09D8). */
 void mp_00D869(void) {
-    uint8_t p0 = cpu_get_p();
+    mb_php();
     CPU_SET_A16(0x0006); call_jsl(0x01D2BF);
     mb_sound(0x0002);
     call_jsl(0x01E06F);
@@ -1807,7 +1813,7 @@ void mp_00D869(void) {
     MB_W(0x09D8, MB_R(0x09D6));
     MB_W(0x09D6, 0x0015);
     CPU_SET_A16(0x0015);
-    cpu_set_p(p0);
+    mb_plp();
 }
 
 /* $00:CE22 (mode bar 120-135): into the save/load menu: tool $11 (the old
@@ -1870,7 +1876,7 @@ void mp_00C9E3(void) {
 /* $00:9734 (mode bar 184-199): unless $19FA, layers $011A = 6 until a
  * click, then back to $13. */
 void mp_009734(void) {
-    uint8_t p0 = cpu_get_p();
+    mb_php();
     mb_sound(0x0006);
     if (MB_R(0x19FA) == 0) {
         op_sep(0x20);
@@ -1880,7 +1886,7 @@ void mp_009734(void) {
         bus_write8(g_cpu.DB, 0x011A, 0x13);
         CPU_SET_A8(0x13);
     }
-    cpu_set_p(p0);
+    mb_plp();
 }
 
 /* $00:96A6 (mode bar 208-223): Gnat Attack ($01:9F6C). */
@@ -1899,7 +1905,7 @@ void mp_0096A6(void) { call_jsl(0x019F6C); }
  * markers $FB47), state $1E, tool $0D, bar mode $0B with the song's
  * length + 1. */
 void mp_00EB7A(void) {
-    uint8_t p0 = cpu_get_p();
+    mb_php();
     mb_sound(0x0006);
     op_sep(0x20);
     call_jsl(0x01D388);
@@ -1954,7 +1960,7 @@ void mp_00EB7A(void) {
     uint16_t len = (uint16_t)(MB_R(0x0C32) + 1);
     bus_write16(0x00, MB_DP(0xAA), 0x000B);
     call_tool_switch(0x000B, 1, &len);
-    cpu_set_p(p0);
+    mb_plp();
 }
 
 /* $00:E3F7 (mode bar 144-159): tool 9 (the old in $1010), its screen (tiles $02:AC80 -> $7E:2100, 20 rows), $F825 for
@@ -2202,7 +2208,636 @@ void mp_00FA65(void) {
 #undef MB_W
 #undef MB_DP
 
+#define MB_R(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+#define MB_W(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+#define MB_DP(o)    ((uint16_t)(g_cpu.DP + (o)))
+/* ---- The top bar while $1992 is set (the stamp editor, $A4B4): $9598's
+ * table $95C2. The picture effects send their sound command ($D2BF) and wait
+ * in the ROM's loop for the NMI to take it ($053A), then $8B03, the effect,
+ * $AAC7, $09A7 = 0. */
+static void er_push16(uint16_t v) { push_a16(v); }
+static uint16_t er_pull16(void) {
+    uint16_t v = bus_wram_read16((uint16_t)(g_cpu.S + 1));
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    return v;
+}
+static void er_start(uint16_t cmd, uint32_t spin) {
+    MB_W(0x09A7, MB_R(0x09A7) + 1);
+    CPU_SET_A16(cmd);
+    call_jsl(0x01D2BF);
+    if ((MB_R(0x053A) & 0x00FF) != 0 && !recomp_rom_wait(spin, spin + 8))
+        while ((MB_R(0x053A) & 0x00FF) != 0 && !g_quit) call_jsl(0x01E2CE);
+    call_jsr(0x008B03);
+}
+static void er_end(void) {
+    call_jsr(0x00AAC7);
+    MB_W(0x09A7, 0);
+}
+
+/* $00:A509 (slots 1-5): the stamp page: $1994 = $A8, its cursor ($B6F4
+ * with +8), $A525, sound 4. */
+void mp_00A509(void) {
+    uint16_t a = bus_read16(0x00, MB_DP(0xA8));
+    if (a >= 0x0006) { CPU_SET_A16(a); return; }
+    MB_W(0x1994, a);
+    CPU_SET_A16((uint16_t)(a + 8)); call_jsr(0x00B6F4);
+    call_jsr(0x00A525);
+    mb_sound(0x0004);
+}
+
+/* $00:A55B (category 2): clear in 4 x 8 steps: each step ANDs the picture's
+ * bytes ([$0D] = the canvas at $0A + $A5F3[step]; 16 of every 32, up to
+ * $6000) with four masks from $A5F7/$A5FF/$A607/$A60F, a frame each. */
+void mp_00A55B(void) {
+    mb_php();
+    er_start(0x0011, 0x00A566);
+    for (uint16_t ox = 0; ox != 4; ox++) {
+        er_push16(ox);                                          /* PHX */
+        uint16_t p = (uint16_t)((bus_read8(0x00, (uint16_t)(0xA5F3 + ox))) + bus_read16(0x00, MB_DP(0x0A)));
+        bus_write16(0x00, MB_DP(0x0D), p);
+        for (uint16_t x = 0; x != 8; x++) {
+            op_sep(0x20);
+            bus_write8(g_cpu.DB, 0x1944, bus_read8(0x00, (uint16_t)(0xA5F7 + x)));
+            bus_write8(g_cpu.DB, 0x1945, bus_read8(0x00, (uint16_t)(0xA5FF + x)));
+            bus_write8(g_cpu.DB, 0x1946, bus_read8(0x00, (uint16_t)(0xA607 + x)));
+            bus_write8(g_cpu.DB, 0x1947, bus_read8(0x00, (uint16_t)(0xA60F + x)));
+            uint32_t base = ((uint32_t)bus_read8(0x00, MB_DP(0x0F)) << 16) | bus_read16(0x00, MB_DP(0x0D));
+            uint16_t y = 0;
+            do {
+                for (int k = 0; k < 4; k++) {
+                    uint32_t q = (base + y) & 0xFFFFFF;
+                    bus_write8((uint8_t)(q >> 16), (uint16_t)q,
+                               bus_read8((uint8_t)(q >> 16), (uint16_t)q) & bus_read8(g_cpu.DB, (uint16_t)(0x1944 + k)));
+                    y = (uint16_t)(y + 2);
+                }
+                if (!(y & 0x000F)) y = (uint16_t)(y + 0x10);
+            } while (y < 0x6000);
+            op_rep(0x20);
+            g_cpu.Y = y;
+            er_push16(x);                                       /* PHX; JSL; PLX */
+            g_cpu.X = x;
+            call_jsl(0x01E2CE);
+            x = er_pull16();
+        }
+        ox = er_pull16();
+    }
+    g_cpu.X = 4;
+    er_end();
+    mb_plp();
+}
+
+/* $00:A637 (category 4): the shuffle: $200 frames; each frame swaps $21 -
+ * (frames left / 16) random pairs of tile words in the picture map at
+ * $7E:2800 (inside $C0-$63F; outside, the in-range one is blanked to
+ * $1FFF), then $DEB2. Then $A982, layers $3FFF ($E033), $8A16. */
+void mp_00A637(void) {
+    mb_php();
+    bus_wram_write8(g_cpu.S, g_cpu.DB); g_cpu.S = (uint16_t)(g_cpu.S - 1);   /* PHB */
+    er_start(0x0013, 0x00A643);
+    bus_wram_write8(g_cpu.S, 0x7E);                             /* PHA; PLB */
+    g_cpu.DB = 0x7E;
+    uint16_t cnt = 0x0200;
+    do {
+        er_push16(cnt);
+        uint16_t n = (uint16_t)((uint16_t)~(cnt >> 4) + 0x0022);
+        do {
+            er_push16(n);
+            call_jsl(0x01E20C);
+            uint16_t r1 = CPU_A16() & 0x003E;
+            er_push16(r1);
+            call_jsl(0x01E20C);
+            uint16_t x = (uint16_t)(((CPU_A16() & 0x00F8) << 3) + r1);
+            er_pull16();
+            call_jsl(0x01E20C);
+            uint16_t r3 = CPU_A16() & 0x003E;
+            er_push16(r3);
+            call_jsl(0x01E20C);
+            uint16_t y = (uint16_t)(((CPU_A16() & 0x00F8) << 3) + r3);
+            er_pull16();
+            g_cpu.X = x; g_cpu.Y = y;
+            bool xin = x >= 0x00C0 && x < 0x0640, yin = y >= 0x00C0 && y < 0x0640;
+            if (!xin) bus_write16(0x7E, (uint16_t)(0x2800 + y), 0x1FFF);
+            else if (!yin) bus_write16(0x7E, (uint16_t)(0x2800 + x), 0x1FFF);
+            else {
+                uint16_t t = bus_read16(0x7E, (uint16_t)(0x2800 + x));
+                er_push16(t);
+                bus_write16(0x7E, (uint16_t)(0x2800 + x), bus_read16(0x7E, (uint16_t)(0x2800 + y)));
+                bus_write16(0x7E, (uint16_t)(0x2800 + y), er_pull16());
+            }
+            n = (uint16_t)(er_pull16() - 1);
+        } while (n != 0);
+        call_jsl(0x01DEB2);
+        call_jsl(0x01E2CE);
+        cnt = (uint16_t)(er_pull16() - 1);
+    } while (cnt != 0);
+    op_sep(0x20);
+    call_jsr(0x00A982);
+    op_rep(0x20);
+    CPU_SET_A16(0x3FFF); call_jsl(0x01E033);
+    call_jsr(0x008A16);
+    call_jsl(0x01E2CE);
+    er_end();
+    g_cpu.S = (uint16_t)(g_cpu.S + 1); g_cpu.DB = bus_wram_read8(g_cpu.S);   /* PLB */
+    mb_plp();
+}
+#undef MB_R
+#undef MB_W
+#undef MB_DP
+
+#define MB_R(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+#define MB_W(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+#define MB_R8(o)    bus_read8(g_cpu.DB, (uint16_t)(o))
+#define MB_W8(o, v) bus_write8(g_cpu.DB, (uint16_t)(o), (uint8_t)(v))
+#define MB_DP(o)    ((uint16_t)(g_cpu.DP + (o)))
+static uint32_t er_long(uint16_t dp) {
+    return ((uint32_t)bus_read8(0x00, MB_DP(dp + 2)) << 16) | bus_read16(0x00, MB_DP(dp));
+}
+static void er_and16(uint32_t base, uint16_t y, uint16_t m) {
+    uint32_t q = (base + y) & 0xFFFFFF;
+    bus_write16((uint8_t)(q >> 16), (uint16_t)q, bus_read16((uint8_t)(q >> 16), (uint16_t)q) & m);
+}
+static void er_push8(uint8_t v) { bus_wram_write8(g_cpu.S, v); g_cpu.S = (uint16_t)(g_cpu.S - 1); }
+static uint8_t er_pull8(void) { g_cpu.S = (uint16_t)(g_cpu.S + 1); return bus_wram_read8(g_cpu.S); }
+
+/* $00:A6F7: the dissolve: two passes of $7000 random picks of a column
+ * pair ($E20C & $FE + pass); each column counts its pixels gone (to $C8,
+ * $7F:0000); $B305 finds the pixel, cleared ($A782 masks) in both
+ * planes [$0A] and [$0D] = [$0A] + $10. */
+void mp_00A6F7(void) {
+    er_start(0x0014, 0x00A701);
+    bus_write16(0x00, MB_DP(0x0D), (uint16_t)(bus_read16(0x00, MB_DP(0x0A)) + 0x10));
+    for (int x = 0x01FE; x >= 0; x -= 2) bus_write16(0x7F, (uint16_t)x, 0x0018);
+    bus_write16(0x7F, 0x0200, 0x0001);
+    int16_t pass;
+    do {
+        uint16_t cnt = 0x7000;
+        do {
+            er_push16(cnt);
+            call_jsl(0x01E20C);
+            uint16_t r = (uint16_t)((CPU_A16() & 0x00FE) + bus_read16(0x7F, 0x0200));
+            bus_write16(0x00, MB_DP(0x80), r);
+            uint16_t x = (uint16_t)(r << 1);
+            uint16_t v = bus_read16(0x7F, x);
+            bus_write16(0x00, MB_DP(0x82), v);
+            v = (uint16_t)(v + 1);
+            if (v != 0x00C8) bus_write16(0x7F, x, v);
+            CPU_SET_A16(v); g_cpu.X = x;
+            call_jsr(0x00B305);
+            uint16_t x2 = g_cpu.X & 0x000E;
+            g_cpu.X = x2;
+            uint16_t y = bus_read16(0x00, MB_DP(0x84));
+            g_cpu.Y = y;
+            uint16_t m = MB_R(0xA782 + x2);
+            er_and16(er_long(0x0A), y, m);
+            er_and16(er_long(0x0D), y, m);
+            cnt = (uint16_t)(er_pull16() - 1);
+        } while (cnt != 0);
+        pass = (int16_t)(bus_read16(0x7F, 0x0200) - 1);
+        bus_write16(0x7F, 0x0200, (uint16_t)pass);
+    } while (pass >= 0);
+    op_sep(0x20);
+    call_jsr(0x00A982);
+    op_rep(0x20);
+    er_end();
+}
+
+/* $00:A792: the scroll-away: the picture layer off ($E042 $3FFF), $DECD;
+ * the row table at $7E:3000 (16 pairs of words, $4000 + two counters going
+ * apart) every frame for $100 frames ($A87E), $0172 up every $40; the
+ * layers back ($0108/$010B/$010C), $8A39. */
+void mp_00A792(void) {
+    mb_php();
+    er_start(0x0015, 0x00A79D);
+    CPU_SET_A16(0x3FFF); call_jsl(0x01E042);
+    call_jsl(0x01DECD);
+    call_jsl(0x01E2CE);
+    for (int x = 0x007E; x >= 0; x -= 2) bus_write16(0x7E, (uint16_t)(0x3000 + x), 0);
+    MB_W8(0x0108, 0x0A); MB_W8(0x010B, 0x35); MB_W8(0x010C, 0x3C);
+    MB_W(0x0178, 0); MB_W(0x0176, 0);
+    call_jsl(0x00A87E);
+    call_jsl(0x01E2CE);
+    bus_write16(0x7F, 0x0202, 0);
+    bus_write16(0x7F, 0x0204, 0);
+    uint16_t cnt = 0;
+    do {
+        er_push16(cnt);
+        for (int x = 0x003C; x >= 0; x -= 4) {
+            bus_write16(0x7E, (uint16_t)(0x3000 + x), (uint16_t)((bus_read16(0x7F, 0x0202) & 0x03FF) | 0x4000));
+            bus_write16(0x7E, (uint16_t)(0x3002 + x), (uint16_t)((bus_read16(0x7F, 0x0204) & 0x03FF) | 0x4000));
+        }
+        g_cpu.X = 0xFFFC;
+        call_jsl(0x00A87E);
+        call_jsl(0x01E2CE);
+        bus_write16(0x7F, 0x0202, (uint16_t)(bus_read16(0x7F, 0x0202) - 1));
+        bus_write16(0x7F, 0x0204, (uint16_t)(bus_read16(0x7F, 0x0204) + 1));
+        cnt = (uint16_t)(er_pull16() + 1);
+        if (!(cnt & 0x003F)) MB_W(0x0172, MB_R(0x0172) + 1);
+    } while (cnt != 0x0100);
+    op_sep(0x20);
+    call_jsr(0x00A982);
+    MB_W8(0x0108, 0x09); MB_W8(0x010B, 0x34); MB_W8(0x010C, 0x38);
+    op_rep(0x20);
+    MB_W(0x0172, 0);
+    call_jsr(0x008A39);
+    call_jsl(0x01E2CE);
+    er_end();
+    mb_plp();
+}
+
+/* $00:A8A8: the mosaic: $40 frames of mosaic size ($0109 = (n*4 & $F0) | 2)
+ * with $0172 = n/8, then off. */
+void mp_00A8A8(void) {
+    mb_php();
+    er_start(0x0016, 0x00A8B3);
+    op_sep(0x20);
+    uint8_t a = 0;
+    do {
+        er_push8(a); er_push8(a);
+        MB_W8(0x0109, ((uint8_t)(a << 2) & 0xF0) | 0x02);
+        a = er_pull8();
+        MB_W8(0x0172, (a >> 3) & 0x0F);
+        MB_W8(0x0173, 0);
+        call_jsl(0x01E2CE);
+        a = (uint8_t)(er_pull8() + 1);
+    } while (a != 0x40);
+    call_jsr(0x00A982);
+    MB_W8(0x0109, 0); MB_W8(0x0172, 0); MB_W8(0x0173, 0);
+    call_jsl(0x01E2CE);
+    op_rep(0x20);
+    er_end();
+    mb_plp();
+}
+
+/* $00:A8FF: the fade: colour math on ($011E/$011F), the fixed colour
+ * ($0120 = $E0 | n/2) up over $40 frames, then back. */
+void mp_00A8FF(void) {
+    mb_php();
+    er_start(0x0017, 0x00A90A);
+    op_sep(0x20);
+    MB_W8(0x011E, 0x00); MB_W8(0x011F, 0x02); MB_W8(0x0120, 0xE0);
+    call_jsl(0x01E2CE);
+    uint8_t a = 0;
+    do {
+        er_push8(a);
+        MB_W8(0x0120, (a >> 1) | 0xE0);
+        call_jsl(0x01E2CE);
+        a = (uint8_t)(er_pull8() + 1);
+    } while (a != 0x40);
+    call_jsr(0x00A982);
+    MB_W8(0x011E, 0x30); MB_W8(0x011F, 0x00); MB_W8(0x0120, 0xE0);
+    call_jsl(0x01E2CE);
+    op_rep(0x20);
+    er_end();
+    mb_plp();
+}
+
+/* $00:A95D: clear at once ($A982). */
+void mp_00A95D(void) {
+    mb_php();
+    er_start(0x0018, 0x00A968);
+    op_sep(0x20);
+    call_jsr(0x00A982);
+    op_rep(0x20);
+    er_end();
+    mb_plp();
+}
+
+/* $00:A9BE: the rocket: $10 frames; its sprites ($0426/$0428 from $AAB7,
+ * for the stamp $19C2 + 1 when $19FA), five rows at $022A.. rising from y
+ * $C8 to 8 with their tiles cycling ($1B24, $AAA1/$AAA3), the picture
+ * cleared behind them row by row ($8A8E). The end is 8-bit. */
+void mp_00A9BE(void) {
+    mb_php();
+    er_start(0x0019, 0x00A9C9);
+    uint16_t y = 0x0010;
+    do { er_push16(y); g_cpu.Y = y; call_jsl(0x01E2CE); y = (uint16_t)(er_pull16() - 1); } while (y != 0);
+    MB_W(0x1B24, 0);
+    MB_W(0x0206, 0);
+    uint16_t a = MB_R(0x19FA) ? (uint16_t)(MB_R(0x19C2) + 1) : 0;
+    uint16_t x = (uint16_t)(a << 2);
+    MB_W(0x0426, (uint16_t)((MB_R(0x0426) & 0x0003) | MB_R(0xAAB7 + x)));
+    MB_W(0x0428, (uint16_t)((MB_R(0x0428) & 0xFFC0) | MB_R(0xAAB9 + x)));
+    op_sep(0x30);
+    for (uint8_t xi = 0, yi = 0; xi != 0x0A; xi += 2, yi += 8) {
+        MB_W8(0x022A + yi, MB_R8(0xAAAD + xi));
+        MB_W8(0x022E + yi, MB_R8(0xAAAE + xi));
+    }
+    uint8_t yy = 0xC8;
+    do {
+        er_push8(yy);
+        for (int k = 0; k < 5; k++) MB_W8(0x022B + 8 * k, yy);
+        uint8_t lo = (uint8_t)(yy + 0x10);
+        for (int k = 0; k < 5; k++) MB_W8(0x022F + 8 * k, lo);
+        uint8_t t = (uint8_t)(MB_R8(0x1B24) + 1);
+        MB_W8(0x1B24, t);
+        if (t == 0x06) { t = 0; MB_W8(0x1B24, 0); }
+        uint8_t xx = (uint8_t)((t & 0xFE) << 1);
+        op_rep(0x20);
+        uint16_t w1 = MB_R(0xAAA1 + xx), w2 = MB_R(0xAAA3 + xx);
+        for (int k = 0; k < 5; k++) { MB_W(0x022C + 8 * k, w1); MB_W(0x0230 + 8 * k, w2); }
+        op_sep(0x20);
+        g_cpu.X = xx;
+        if (yy < 0xB7) { g_cpu.X = (uint8_t)(yy + 1); call_jsr(0x008A8E); }
+        yy = (uint8_t)(er_pull8() - 1);
+    } while (yy != 0x07);
+    g_cpu.Y = yy;
+    MB_W8(0x0206, MB_R8(0x0206) + 1);
+    call_jsr(0x00AAC7);
+    MB_W8(0x09A7, 0);
+    mb_plp();
+}
+#undef MB_R
+#undef MB_W
+#undef MB_R8
+#undef MB_W8
+#undef MB_DP
+
+/* $00:8A8E (X = a picture row): clear that row of the picture ($40 words
+ * of [$0A], 16 bytes apart, from row (X & $F8) * $80 + (X & 7) * 2), mark it
+ * ($198C), $8AC2, a frame. $8A8A is its long entry. */
+void mp_008A8E(void) {
+    uint8_t p0 = cpu_get_p();
+    bus_wram_write8(g_cpu.S, p0); g_cpu.S = (uint16_t)(g_cpu.S - 1);   /* PHP */
+    op_rep(0x30);
+    uint16_t x = g_cpu.X;
+    uint16_t a = (uint16_t)((x & 0x00F8) << 7);
+    bus_write16(g_cpu.DB, 0x198C, a);
+    push_a16(a);
+    uint16_t y = (uint16_t)(((x & 0x0007) << 1) + a);
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    uint32_t base = ((uint32_t)bus_read8(0x00, (uint16_t)(g_cpu.DP + 0x0C)) << 16) | bus_read16(0x00, (uint16_t)(g_cpu.DP + 0x0A));
+    for (int n = 0; n < 0x40; n++) {
+        uint32_t q = (base + y) & 0xFFFFFF;
+        bus_write16((uint8_t)(q >> 16), (uint16_t)q, 0);
+        y = (uint16_t)(y + 0x10);
+    }
+    g_cpu.X = 0; g_cpu.Y = y;
+    call_jsr(0x008AC2);
+    bus_write16(g_cpu.DB, 0x0202, (uint16_t)(bus_read16(g_cpu.DB, 0x0202) + 1));
+    call_jsl(0x01E2CE);
+    g_cpu.S = (uint16_t)(g_cpu.S + 1);                                  /* PLP */
+    cpu_set_p(bus_wram_read8(g_cpu.S));
+}
+void mp_008A8A(void) { call_jsr(0x008A8E); }
+
+/* $00:8AC2: queue the row $198C for the frame's DMA: the 5-word entry from
+ * $8AF5 at $0182 + $0204 ($0204 += 9), its source ($198C + $0A at $0183)
+ * and VRAM address ($198C / 2 at $0189). */
+void mp_008AC2(void) {
+    uint8_t db = g_cpu.DB;
+    bus_write16(db, 0x0202, 0);
+    uint16_t x = bus_read16(db, 0x0204), y = 0;
+    do {
+        bus_write16(db, (uint16_t)(0x0182 + x), bus_read16(db, (uint16_t)(0x8AF5 + y)));
+        y = (uint16_t)(y + 2); x = (uint16_t)(x + 2);
+    } while (y < 0x000A);
+    bus_write16(db, 0x0204, (uint16_t)(bus_read16(db, 0x0204) + 9));
+    bus_write16(db, 0x0183, (uint16_t)(bus_read16(db, 0x198C) + bus_read16(0x00, (uint16_t)(g_cpu.DP + 0x0A))));
+    uint16_t a = (uint16_t)(bus_read16(db, 0x198C) >> 1);
+    bus_write16(db, 0x0189, a);
+    CPU_SET_A16(a); g_cpu.X = x; g_cpu.Y = y;
+}
+
+/* ---- $01:CFD5, the wave: the picture's rows shaken by two HDMA tables
+ * ($7F:9200 and $7F:9600, two buffers each, $0222/$0224 the one in use)
+ * while its colours step through the palettes at $02:FA00. */
+#define WV_R(b, o)     bus_read16((b), (uint16_t)(o))
+#define WV_W(b, o, v)  bus_write16((b), (uint16_t)(o), (uint16_t)(v))
+#define WV_W8(b, o, v) bus_write8((b), (uint16_t)(o), (uint8_t)(v))
+static void wv_phb(void) { bus_wram_write8(g_cpu.S, g_cpu.DB); g_cpu.S = (uint16_t)(g_cpu.S - 1); }
+static void wv_plb(void) { g_cpu.S = (uint16_t)(g_cpu.S + 1); g_cpu.DB = bus_wram_read8(g_cpu.S); }
+static void wv_db7f(void) { wv_phb(); bus_wram_write16((uint16_t)(g_cpu.S - 1), 0x7F7F); g_cpu.DB = 0x7F; }
+
+/* $01:D287: queue the palette upload (the 8 bytes at $01:D2B7). */
+void mp_01D287(void) {
+    uint8_t p0 = cpu_get_p();
+    bus_wram_write8(g_cpu.S, p0); g_cpu.S = (uint16_t)(g_cpu.S - 1);
+    wv_phb();
+    bus_wram_write8(g_cpu.S, 0x01);                     /* PHA; PLB */
+    g_cpu.DB = 0x01;
+    WV_W8(0x00, 0x0202, 0);
+    uint8_t x = (uint8_t)(bus_read8(0x00, 0x0204) + 7);
+    WV_W8(0x00, 0x0204, x);
+    for (int y = 7; y >= 0; y--, x--) WV_W8(0x00, 0x0182 + x, bus_read8(0x01, (uint16_t)(0xD2B7 + y)));
+    WV_W8(0x00, 0x0202, 1);
+    wv_plb();
+    g_cpu.S = (uint16_t)(g_cpu.S + 1);
+    cpu_set_p(bus_wram_read8(g_cpu.S));
+}
+
+/* $01:D259 (A = n): palette n of $02:FA00 into $09AF, queued. */
+void mp_01D259(void) {
+    uint16_t a = CPU_A16();
+    push_a16(a);
+    int x = (int)(uint16_t)((a << 5) + 0x1E);
+    for (int y = 0x1E; y >= 0; y -= 2, x -= 2) WV_W(g_cpu.DB, 0x09AF + y, bus_read16(0x02, (uint16_t)(0xFA00 + x)));
+    call_jsr(0x01D287);
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    CPU_SET_A16(a);
+}
+
+/* $01:D279: the picture's own palette back ($02:FEE0), queued. */
+void mp_01D279(void) {
+    for (int x = 0x1E; x >= 0; x -= 2) WV_W(g_cpu.DB, 0x09AF + x, bus_read16(0x02, (uint16_t)(0xFEE0 + x)));
+    call_jsr(0x01D287);
+}
+
+/* $01:D22B / $01:D242: the picture's tiles to palette 7 and back. */
+void mp_01D22B(void) {
+    for (int x = 0x057E; x >= 0; x -= 2) WV_W(0x7E, 0x28C0 + x, WV_R(0x7E, 0x28C0 + x) | 0x1C00);
+    call_jsl(0x01DEB2);
+}
+void mp_01D242(void) {
+    for (int x = 0x057E; x >= 0; x -= 2) WV_W(0x7E, 0x28C0 + x, WV_R(0x7E, 0x28C0 + x) & 0xE3FF);
+    call_jsl(0x01DEB2);
+}
+
+/* $01:D08D: both tables cleared. */
+void mp_01D08D(void) {
+    wv_db7f();
+    for (int x = 0x01FE; x >= 0; x--) {
+        WV_W(0x7F, 0x9200 + x, 0); WV_W(0x7F, 0x9400 + x, 0);
+        WV_W(0x7F, 0x9600 + x, 0); WV_W(0x7F, 0x9800 + x, 0);
+    }
+    wv_plb();
+    WV_W(g_cpu.DB, 0x0222, 0);
+    WV_W(g_cpu.DB, 0x0224, 0);
+    g_cpu.X = 0xFFFF;
+}
+
+/* Next entry of a table: past line $FF a repeat byte $E1; at $1C2 done. */
+static bool wv_next(uint16_t base, uint16_t *x) {
+    uint16_t t = *x & 0x01FF;
+    if (t == 0x01C2) return true;
+    if (t == 0x00FF) { WV_W8(0x7F, base + *x, 0xE1); (*x)++; }
+    return false;
+}
+static uint16_t wv_rand(void) { call_jsl(0x01E20C); return CPU_A16(); }
+
+/* $01:D0AD: table 1, the shake: runs of 0-15 still lines, then 0-3
+ * lines at -8..+7. */
+void mp_01D0AD(void) {
+    wv_db7f();
+    uint16_t x = (bus_read16(0x00, 0x0222) & 1) ? 0x0200 : 0;
+    WV_W8(0x7F, 0x9200 + x, 0xFF); x++;
+    for (;;) {
+        int16_t y = (int16_t)(wv_rand() & 0x000F);
+        bool end = false;
+        do {
+            WV_W(0x7F, 0x9200 + x, 0); x = (uint16_t)(x + 2);
+            if ((end = wv_next(0x9200, &x))) break;
+        } while (--y >= 0);
+        if (end) break;
+        y = (int16_t)(wv_rand() & 0x0003);
+        do {
+            WV_W(0x7F, 0x9200 + x, (uint16_t)((wv_rand() & 0x000F) - 8)); x = (uint16_t)(x + 2);
+            if ((end = wv_next(0x9200, &x))) break;
+        } while (--y >= 0);
+        if (end) break;
+    }
+    WV_W8(0x7F, 0x9200 + x, 0);
+    WV_W(0x00, 0x0222, bus_read16(0x00, 0x0222) ^ 0x0003);
+    g_cpu.X = x;
+    wv_plb();
+}
+
+/* $01:D13B: table 2, the slant: each line 1-16 more than the last. */
+void mp_01D13B(void) {
+    wv_db7f();
+    uint16_t x = (bus_read16(0x00, 0x0224) & 1) ? 0x0200 : 0;
+    WV_W8(0x7F, 0x9600 + x, 0xFF); x++;
+    uint16_t acc = 0;
+    push_a16(acc);
+    uint16_t r = (uint16_t)((wv_rand() & 0x000F) + 1);
+    push_a16(r);
+    for (;;) {
+        WV_W(0x7F, 0x9600 + x, acc);
+        acc = (uint16_t)(acc + r);
+        bus_wram_write16((uint16_t)(g_cpu.S + 3), acc);
+        x = (uint16_t)(x + 2);
+        if (wv_next(0x9600, &x)) break;
+    }
+    g_cpu.S = (uint16_t)(g_cpu.S + 4);
+    WV_W8(0x7F, 0x9600 + x, 0);
+    WV_W(0x00, 0x0224, bus_read16(0x00, 0x0224) ^ 0x0003);
+    g_cpu.X = x;
+    wv_plb();
+}
+
+/* $01:D1A1 / $01:D1E6: table 1 / 2 still. */
+static void wv_still(uint16_t base, uint16_t flag) {
+    wv_db7f();
+    uint16_t x = (bus_read16(0x00, flag) & 1) ? 0x0200 : 0;
+    WV_W8(0x7F, base + x, 0x7F); x++;
+    WV_W(0x7F, base + x, 0); x = (uint16_t)(x + 2);
+    WV_W8(0x7F, base + x, 0x61); x++;
+    WV_W(0x7F, base + x, 0); x = (uint16_t)(x + 2);
+    WV_W8(0x7F, base + x, 0);
+    WV_W(0x00, flag, bus_read16(0x00, flag) ^ 0x0003);
+    g_cpu.X = x;
+    wv_plb();
+}
+void mp_01D1A1(void) { wv_still(0x9200, 0x0222); }
+void mp_01D1E6(void) { wv_still(0x9600, 0x0224); }
+
+/* PHA; body; frame; PLA; DEC; BPL: n+1 frames from n down to 0. */
+static void wv_frames(uint16_t n, void (*body)(void)) {
+    int16_t a = (int16_t)n;
+    do {
+        push_a16((uint16_t)a);
+        body();
+        call_jsl(0x01E2CE);
+        a = (int16_t)(bus_wram_read16((uint16_t)(g_cpu.S + 1)) - 1);
+        g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    } while (a >= 0);
+}
+static void wv_shake(void) { call_jsr(0x01D0AD); }
+static void wv_rest(void) { call_jsr(0x01D1A1); }
+static void wv_both(void) { call_jsr(0x01D0AD); call_jsr(0x01D13B); }
+static void wv_shake_rest2(void) { call_jsr(0x01D0AD); call_jsr(0x01D1E6); }
+
+/* $01:CFD5 (JSL): 16 rounds of shaking (longer each round) with rests,
+ * then 16 rounds of shake and slant, then the picture rows cleared from
+ * $B8 up to 9 ($8A8A) still shaking; all back. */
+void mp_01CFD5(void) {
+    CPU_SET_A16(0); call_jsr(0x01D259);
+    call_jsr(0x01D22B);
+    call_jsl(0x01E2CE);
+    call_jsr(0x01D08D);
+    WV_W(g_cpu.DB, 0x0222, WV_R(g_cpu.DB, 0x0222) + 1);
+    WV_W(g_cpu.DB, 0x0224, WV_R(g_cpu.DB, 0x0224) + 1);
+    for (uint16_t a = 0x0010; a != 0; a--) {
+        push_a16(a);
+        uint16_t k = (uint16_t)((uint16_t)~a + 0x0011);
+        CPU_SET_A16(k); call_jsr(0x01D259);
+        wv_frames(k, wv_shake);
+        CPU_SET_A16((uint16_t)((((uint16_t)~a + 0x0011) >> 2) + 4)); call_jsr(0x01D259);
+        wv_frames(a, wv_rest);
+        g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    }
+    CPU_SET_A16(0x000F); call_jsr(0x01D259);
+    for (uint16_t a = 0x0010; a != 0; a--) {
+        push_a16(a);
+        wv_frames((uint16_t)((uint16_t)~a + 0x0011), wv_both);
+        wv_frames(a, wv_shake_rest2);
+        g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    }
+    WV_W(g_cpu.DB, 0x0206, 0);
+    for (uint16_t a = 0x00B8; a != 0x0008; a--) {
+        push_a16(a);
+        call_jsr(0x01D0AD);
+        call_jsr(0x01D13B);
+        g_cpu.X = a;
+        call_jsl(0x008A8A);
+        g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    }
+    WV_W(g_cpu.DB, 0x0206, WV_R(g_cpu.DB, 0x0206) + 1);
+    WV_W(g_cpu.DB, 0x0222, 0xFFFF);
+    WV_W(g_cpu.DB, 0x0224, 0xFFFF);
+    call_jsr(0x01D242);
+    call_jsr(0x01D279);
+}
+#undef WV_R
+#undef WV_W
+#undef WV_W8
+
+/* $00:A617: the wave ($01:CFD5). */
+void mp_00A617(void) {
+    er_start(0x0012, 0x00A621);
+    call_jsl(0x01CFD5);
+    er_end();
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x01D287, mp_01D287);
+    func_table_register(0x01D259, mp_01D259);
+    func_table_register(0x01D279, mp_01D279);
+    func_table_register(0x01D22B, mp_01D22B);
+    func_table_register(0x01D242, mp_01D242);
+    func_table_register(0x01D08D, mp_01D08D);
+    func_table_register(0x01D0AD, mp_01D0AD);
+    func_table_register(0x01D13B, mp_01D13B);
+    func_table_register(0x01D1A1, mp_01D1A1);
+    func_table_register(0x01D1E6, mp_01D1E6);
+    func_table_register(0x01CFD5, mp_01CFD5);
+    func_table_register(0x00A617, mp_00A617);
+
+    func_table_register(0x008AC2, mp_008AC2);
+
+    func_table_register(0x008A8E, mp_008A8E);
+    func_table_register(0x008A8A, mp_008A8A);
+
+    func_table_register(0x00A6F7, mp_00A6F7);
+    func_table_register(0x00A792, mp_00A792);
+    func_table_register(0x00A8A8, mp_00A8A8);
+    func_table_register(0x00A8FF, mp_00A8FF);
+    func_table_register(0x00A95D, mp_00A95D);
+    func_table_register(0x00A9BE, mp_00A9BE);
+
+    func_table_register(0x00A509, mp_00A509);
+    func_table_register(0x00A55B, mp_00A55B);
+    func_table_register(0x00A637, mp_00A637);
+
     func_table_register(0x00F9A7, mp_00F9A7);
     func_table_register(0x00FA08, mp_00FA08);
     func_table_register(0x00FEF9, mp_00FEF9);
