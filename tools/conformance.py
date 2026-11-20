@@ -94,7 +94,8 @@ INNER = {"gnatinner": GNAT_LOOP, "gnatinner2": GNAT_LOOP, "gnatinner3": GNAT_LOO
          # the rocket ($A9BE) with the clicks that lead to it
          "rocketinner": {"0087A8", "008BEB", "008BA9", "009598", "00A9BE"},
          # the wave ($A617, $01:CFD5) likewise
-         "waveinner": {"0087A8", "008BEB", "008BA9", "009598", "00A617", "01CFD5"}}
+         "waveinner": {"0087A8", "008BEB", "008BA9", "009598", "00A617"},
+         "waveinner2": {"0087A8", "008BEB", "008BA9", "009598", "00A617", "01CFD5"}}
 # Scenarios checked with the jump-entered handlers alone (see check_scenario).
 HANDLERS_ALONE = {"bars", "bars2", "bars3", "titlestates",
                   "modes", "modes2", "modes3", "modes4", "modes5", "modes6", "modes7", "patbar", "musicbar",

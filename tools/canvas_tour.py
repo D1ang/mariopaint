@@ -156,6 +156,7 @@ SCENARIOS = {
     "stampfx9": [(192, 212), (128, 8), ("wait", 900)],
     # The wave again with its callers left out, for the routines in it.
     "waveinner": None,
+    "waveinner2": None,
     # The rocket again with its callers left out, for the routines in it.
     "rocketinner": None,
     # The music editor's bar (music2's clicks), its buttons checked alone.
@@ -176,6 +177,7 @@ SCENARIOS["titlestates"] = SCENARIOS["title"]
 SCENARIOS["musicbar"] = SCENARIOS["music2"]
 SCENARIOS["rocketinner"] = SCENARIOS["stampfx8"]
 SCENARIOS["waveinner"] = SCENARIOS["stampfx9"]
+SCENARIOS["waveinner2"] = SCENARIOS["stampfx9"]
 SCENARIOS["gnatinner"] = SCENARIOS["gnatwaves"]
 SCENARIOS["gnatinner2"] = SCENARIOS["gnat"]
 SCENARIOS["gnatinner3"] = SCENARIOS["gnatpause"]

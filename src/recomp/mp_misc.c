@@ -2808,7 +2808,28 @@ void mp_00A617(void) {
     er_end();
 }
 
+#define MB_R(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+#define MB_W(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+#define MB_DP(o)    ((uint16_t)(g_cpu.DP + (o)))
+/* $01:D39F (JSL, A 8-bit): $40 frames. */
+void mp_01D39F(void) {
+    uint8_t a = 0x40;
+    do {
+        bus_wram_write8(g_cpu.S, a); g_cpu.S = (uint16_t)(g_cpu.S - 1);
+        call_jsl(0x01E2CE);
+        g_cpu.S = (uint16_t)(g_cpu.S + 1);
+        a = (uint8_t)(bus_wram_read8(g_cpu.S) - 1);
+    } while (a != 0);
+    CPU_SET_A8(0);
+}
+
+#undef MB_R
+#undef MB_W
+#undef MB_DP
+
 void mp_register_misc(void) {
+    func_table_register(0x01D39F, mp_01D39F);
+
     func_table_register(0x01D287, mp_01D287);
     func_table_register(0x01D259, mp_01D259);
     func_table_register(0x01D279, mp_01D279);
