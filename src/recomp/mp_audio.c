@@ -208,25 +208,22 @@ void mp_01D2BF(void) {
     apu_queue_push(0);
 }
 
-/* ========================================================================
- * $01:D388 — Sound reset (A 8-bit)
+/* $01:D388 (JSL, A 8-bit): sound command 0 ($D2BF), then wait until the
+ * NMI's sound handler has sent it (-: LDA $053A : BNE -) and $12 frames
+ * more for the sound CPU (the PHA/JSL $E2CE/PLA loop).
  *
- * Command $00 through $01:D2BF, a spin until the NMI's sound handler has
- * cleared the busy count $053A, then $12 frames.
- * ======================================================================== */
+ * Both waits run in the ROM's own code ($D38E up to the RTL at $D39E,
+ * recomp_rom_wait): a native body cannot take the NMI inside its own loop,
+ * and with the $12 frames waited natively instead (frame-driver yields)
+ * the bank upload that follows ($01:DF25) never got its answer from the
+ * sound CPU in the timed loop, though the check passed. Only where the ROM
+ * cannot run them (no timed loop) does it wait by frames. */
 void mp_01D388(void) {
     CPU_SET_A8(0x00);
     call_jsl(0x01D2BF);
-    /* -: LDA $053A : BNE -  The NMI's sound handler counts it down. A
-     * native body cannot take the NMI in the middle of its own loop, so it
-     * waits in the ROM's loop ($D38E, on to $D393); only where it cannot
-     * (outside the timed loop) does it wait by frames instead. It passes the
-     * check, but in the timed loop the bank upload after it ($DF25) then
-     * waits for the sound CPU forever, so it is not run natively there
-     * (conformance.py NOT_TIMED). */
-    if (bus_read8(g_cpu.DB, 0x053A) != 0 && !recomp_rom_wait(0x01D38E, 0x01D393))
-        while (bus_read8(g_cpu.DB, 0x053A) != 0 && !g_quit)
-            call_jsl(0x01E2CE);
+    if (recomp_rom_wait(0x01D38E, 0x01D39E)) { CPU_SET_A8(0x00); return; }
+    while (bus_read8(g_cpu.DB, 0x053A) != 0 && !g_quit)
+        call_jsl(0x01E2CE);
     for (uint8_t n = 0x12; n; n--) {
         CPU_SET_A8(n);
         call_jsl(0x01E2CE);

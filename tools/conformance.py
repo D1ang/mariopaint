@@ -63,10 +63,9 @@ FRAME_DRIVERS = {"018260", "01E2CE", "01E794", "01E7C9"}
 # the ROM spins (a native body cannot take the NMI mid-spin): same end
 # state, different timing, so they never run as timed intercepts.
 TIMING_SENSITIVE = set()
-# Pass under check but hang the timed loop when run natively (so not in
-# k_verified): $01:D388 native leaves the sound CPU unready for the bank
-# upload that follows ($01:DF25 then waits for it forever).
-NOT_TIMED = {"01D388"}
+# Pass under check but break the timed loop when run natively (so not in
+# k_verified; tools/timed_smoke.py finds such breakage). None at present.
+NOT_TIMED = set()
 
 JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
                 "009760", "009853", "00987B", "0098C3", "0098F8", "009C25", "009DAB", "009DFB",
@@ -84,7 +83,7 @@ JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
                 # bar mode 8's buttons
                 "00EAA4", "00E9A1", "00EA12", "00E848", "00EA69",
                 # the music editor's bar (mode 11)
-                "00F9A7", "00FA08", "00FEF9", "00FA65",
+                "00F9A7", "00FA08", "00FEF9", "00FA65", "00EF6E",
                 # the stamp editor's top bar
                 "00A509", "00A55B", "00A637", "00A6F7", "00A792", "00A8A8", "00A8FF", "00A95D", "00A9BE", "00A617"]
 
@@ -103,7 +102,7 @@ INNER = {"gnatinner": GNAT_LOOP, "gnatinner2": GNAT_LOOP, "gnatinner3": GNAT_LOO
 # Scenarios checked with the jump-entered handlers alone (see check_scenario).
 HANDLERS_ALONE = {"bars", "bars2", "bars3", "titlestates",
                   "modes", "modes2", "modes3", "modes4", "modes5", "modes6", "modes7", "patbar", "musicbar",
-                  "stampfx", "stampfx2", "stampfx3", "stampfx4", "stampfx5", "stampfx6", "stampfx7", "stampfx8", "stampfx9"}
+                  "stampfx", "stampfx2", "stampfx3", "stampfx4", "stampfx5", "stampfx6", "stampfx7", "stampfx8", "stampfx9", "musicexit"}
 DISPATCHERS = {"008BEB", "009564", "009598", "0095E7", "018308"}
 
 

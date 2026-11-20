@@ -1918,10 +1918,13 @@ void mp_00EB7A(void) {
     bus_write8(g_cpu.DB, 0x2140, 0xFF);
     CPU_SET_A8(0xFF);
     call_jsl(0x01DF25);
-    for (int n = 0; n < 24000; n++) {                       /* until the sound CPU answers */
-        bus_write8(g_cpu.DB, 0x2140, 0x01);
-        if (bus_read8(g_cpu.DB, 0x2140) == 0x01 || !recomp_timed_spin(64)) break;
-    }
+    /* -: LDA #1 : STA $2140 : LDA $2140 : CMP #1 : BNE -  until the sound
+     * CPU answers: in the ROM's own loop ($EBA1 to $EBAD) where it can run. */
+    if (!recomp_rom_wait(0x00EBA1, 0x00EBAD))
+        for (int n = 0; n < 24000; n++) {
+            bus_write8(g_cpu.DB, 0x2140, 0x01);
+            if (bus_read8(g_cpu.DB, 0x2140) == 0x01 || !recomp_timed_spin(64)) break;
+        }
     op_rep(0x20);
     call_jsl(0x01E2F3);
     MB_W(0x0206, 0);
@@ -2831,7 +2834,73 @@ void mp_01D39F(void) {
 
 
 
+#define MB_R(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+#define MB_W(o, v)  bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+#define MB_DP(o)    ((uint16_t)(g_cpu.DP + (o)))
+/* $00:EF6E (music bar 8-23, on a click): leave the music editor. Fade the
+ * music ($D39F), the canvas sound bank ($1A), the leaving sound ($D3AB);
+ * then it drops its caller's return address (PLA), so its RTS (at the end
+ * of $A363) leaves the music editor's loop. The tool and its state back
+ * ($09DC, $0EB0, $09DE, $09D8), the canvas screen ($C414, or $C3DE with
+ * $19FA), tool switch 7, and the stamp editor or the tool's bar. */
+void mp_00EF6E(void) {
+    call_jsl(0x01E2F3);
+    uint16_t c = MB_R(0x04CA);
+    if (!(c & 0x0020)) { CPU_SET_A16(c); return; }
+    mb_sound(0x0001);
+    op_sep(0x20);
+    call_jsl(0x01D39F);
+    call_jsl(0x01E30E);
+    bus_write8(0x00, MB_DP(0xCC), 0x00);
+    bus_write8(0x00, MB_DP(0xCD), 0x80);
+    bus_write8(0x00, MB_DP(0xCE), 0x1A);
+    bus_write8(g_cpu.DB, 0x2140, 0xFF);
+    CPU_SET_A8(0xFF);
+    call_jsl(0x01DF25);
+    op_rep(0x20);
+    call_jsl(0x01E2F3);
+    call_jsl(0x01D3AB);
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);                       /* PLA: the caller's return */
+    mb_php();
+    call_jsl(0x01E06F);
+    MB_W(0x0997, MB_R(0x0EB0));
+    uint16_t t = MB_R(0x09DC);
+    MB_W(0x04D0, t);
+    if (t == 0x0007) MB_W(0x1992, MB_R(0x1992) + 1);
+    bus_write16(0x00, MB_DP(0xA6), MB_R(0x09DE));
+    if (MB_R(0x19FA) == 0) call_jsr(0x00C414); else call_jsr(0x00C3DE);
+    bus_write8(g_cpu.DB, 0x010E, 0x06);
+    CPU_SET_A16(0x3FFF); call_jsl(0x01E033);
+    MB_W(0x0172, 0);
+    call_jsr(0x008A16);
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    MB_W(0x0E8E, 0);
+    mb_tool(0x0007);
+    mb_cdE1(0xCF16);
+    mb_cdE1(0xCE4B);
+    call_jsr(0x00A451);
+    call_jsr(0x00A525);
+    MB_W(0x09D6, MB_R(0x09D8));
+    MB_W(0x0206, MB_R(0x0206) + 1);
+    mb_plp();
+    if (MB_R(0x1992) != 0) {
+        CPU_SET_A16(0x000F); call_jsr(0x00B66C);
+        CPU_SET_A16((uint16_t)(MB_R(0x1994) + 8)); call_jsr(0x00B6F4);
+    } else {
+        bus_write16(0x00, MB_DP(0xA8), (uint16_t)(MB_R(0x04D0) & 0xFF00));
+        call_jsr(0x0096E1);
+        if (MB_R(0x04D0) == 0x0006) MB_W(0x09AB, MB_R(0x09AB) + 1);
+    }
+    tail_jmp(0x00A363);
+}
+#undef MB_R
+#undef MB_W
+#undef MB_DP
+
 void mp_register_misc(void) {
+    func_table_register(0x00EF6E, mp_00EF6E);
+
 
     func_table_register(0x01D39F, mp_01D39F);
 

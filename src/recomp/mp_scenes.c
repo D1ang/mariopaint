@@ -368,10 +368,13 @@ void mp_019372(void) {
     call_jsl(0x01D388);
     call_jsl(0x01E30E);
     sound_bank(0x1C);
-    for (int n = 0; n < 24000; n++) {                    /* until the sound CPU answers */
-        bus_write8(db, 0x2140, 0x01);
-        if (bus_read8(db, 0x2140) == 0x01 || !recomp_timed_spin(64)) break;
-    }
+    /* Until the sound CPU answers: in the ROM's own loop ($9573 to $957F),
+     * as a native spin on the port left the sound CPU unanswered later. */
+    if (!recomp_rom_wait(0x019573, 0x01957F))
+        for (int n = 0; n < 24000; n++) {
+            bus_write8(db, 0x2140, 0x01);
+            if (bus_read8(db, 0x2140) == 0x01 || !recomp_timed_spin(64)) break;
+        }
     g_cpu.flag_M = false;
     call_jsl(0x01E2F3);
     W16(0x0446, 0);

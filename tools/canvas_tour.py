@@ -161,6 +161,9 @@ SCENARIOS = {
     "rocketinner": None,
     # The music editor's bar (music2's clicks), its buttons checked alone.
     "musicbar": None,
+    # Into the music editor and out again ($EF6E), checked alone.
+    "musicexit": [MODE_BAR, (102, 212), ("wait", 200), (128, 112), (15, 212), ("wait", 300), (128, 112),
+                  ("drag", 40, 60, 120, 90), (128, 112)],
     # Gnat Attack again (gnatwaves, gnat, gnatpause) with its game loop and phases not
     # under check, so the routines inside them are checked one by one.
     "gnatinner": None,
