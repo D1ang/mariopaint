@@ -51,16 +51,23 @@ def main():
     for r in cat["regions"]:
         if r["kind"] not in KINDS:
             continue
-        blob = rom[r["offset"]:r["offset"] + r["length"]]
-        rel = os.path.join(r["kind"], f"{r['snes']}.bin")
+        off, length, snes = r["offset"], r["length"], r["snes"]
+        if r["kind"] == "apu" and 0 < int(snes, 16) & 0x7FFF <= 2:
+            # An upload set starts at bank:$8000 ($CC = $8000); its first
+            # bytes may have been read by other code too, so the catalogue
+            # can start the region a byte or two later.
+            back = int(snes, 16) & 0x7FFF
+            off, length, snes = off - back, length + back, f"{int(snes, 16) - back:06X}"
+        blob = rom[off:off + length]
+        rel = os.path.join(r["kind"], f"{snes}.bin")
         path = os.path.join(a.out, rel)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "wb") as f:
             f.write(blob)
-        files.append({"file": rel.replace(os.sep, "/"), "kind": r["kind"], "snes": r["snes"],
-                      "rom_offset": r["offset"], "length": r["length"], "target": r.get("target"),
+        files.append({"file": rel.replace(os.sep, "/"), "kind": r["kind"], "snes": snes,
+                      "rom_offset": off, "length": length, "target": r.get("target"),
                       "sha1": hashlib.sha1(blob).hexdigest()})
-        total[r["kind"]] += r["length"]
+        total[r["kind"]] += length
     with open(os.path.join(a.out, "manifest.json"), "w") as f:
         json.dump({"rom_sha1": sha, "files": files}, f, indent=1)
     print(f"extract_assets: {len(files)} files in {a.out}: " +
