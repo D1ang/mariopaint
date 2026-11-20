@@ -1,18 +1,19 @@
 # ROM catalogue
 
 What the tours read from the ROM (tools/rom_catalog.py over the
-SNESRECOMP_ROMLOG logs of 42 scenario runs on the genuine ROM).
+SNESRECOMP_ROMLOG logs of 84 scenario runs on the genuine ROM).
 Addresses and sizes only; the full region list is in
 scratch/romlog/catalog.json.
 
 | kind | bytes | share |
 |---|---:|---:|
 | apu | 228182 | 21.8% |
-| data | 153537 | 14.6% |
+| data | 153549 | 14.6% |
 | vram | 118528 | 11.3% |
-| code | 38681 | 3.7% |
+| code | 38863 | 3.7% |
 | cgram | 1024 | 0.1% |
-| (not reached by the tours) | 508624 | 48.5% |
+| native | 342 | 0.0% |
+| (not reached by the tours) | 508088 | 48.5% |
 
 ## Asset regions (DMA targets and CPU-read data)
 
@@ -252,8 +253,10 @@ scratch/romlog/catalog.json.
 | 0F8006 | 078006 | 20 | data | 01962C |
 | 0F8114 | 078114 | 62 | data | 01962C |
 | 0F81A4 | 0781A4 | 30 | data | 01962C |
+| 0F81C6 | 0781C6 | 62 | native |  |
 | 0F826C | 07826C | 50 | data | 01962C |
 | 0F832C | 07832C | 26 | data | 01962C |
+| 0F8346 | 078346 | 30 | native |  |
 | 0F8374 | 078374 | 26 | data | 01962C |
 | 0F83A0 | 0783A0 | 26 | data | 01962C |
 | 0F845C | 07845C | 74 | data | 01962C |
