@@ -1,19 +1,19 @@
 # ROM catalogue
 
 What the tours read from the ROM (tools/rom_catalog.py over the
-SNESRECOMP_ROMLOG logs of 84 scenario runs on the genuine ROM).
+SNESRECOMP_ROMLOG logs of 92 scenario runs on the genuine ROM).
 Addresses and sizes only; the full region list is in
 scratch/romlog/catalog.json.
 
 | kind | bytes | share |
 |---|---:|---:|
 | apu | 228182 | 21.8% |
-| data | 153549 | 14.6% |
+| data | 154516 | 14.7% |
 | vram | 118528 | 11.3% |
-| code | 38863 | 3.7% |
+| code | 40358 | 3.8% |
 | cgram | 1024 | 0.1% |
-| native | 342 | 0.0% |
-| (not reached by the tours) | 508088 | 48.5% |
+| native | 287 | 0.0% |
+| (not reached by the tours) | 505681 | 48.2% |
 
 ## Asset regions (DMA targets and CPU-read data)
 
@@ -63,10 +63,17 @@ scratch/romlog/catalog.json.
 | 018D85 | 008D85 | 20 | data | 018D35 |
 | 019E24 | 009E24 | 16 | data | 019DFE |
 | 019E3C | 009E3C | 80 | data | 019DFE |
+| 01A5FA | 00A5FA | 18 | data | 01E393 |
 | 01AA20 | 00AA20 | 36 | data | 01BD87 |
 | 01AC3C | 00AC3C | 48 | data | 01BD87 |
 | 01B348 | 00B348 | 22 | data | 01BD87 |
-| 01B3AE | 00B3AE | 18 | data | 01BD87 |
+| 01B36A | 00B36A | 19 | data | 01BD87 |
+| 01B37E | 00B37E | 31 | data | 01BD87 |
+| 01B3AE | 00B3AE | 40 | data | 01BD87 |
+| 01B3D8 | 00B3D8 | 34 | data | 01BD87 |
+| 01B46C | 00B46C | 21 | data | 01B3FA |
+| 01B5FB | 00B5FB | 20 | data | 01E393 |
+| 01B616 | 00B616 | 20 | data | 01E393 |
 | 01C0BF | 00C0BF | 20 | data | 01C012 |
 | 01C10F | 00C10F | 36 | data | 01C0D3 |
 | 01C7F2 | 00C7F2 | 364 | data | 01C622 |
@@ -190,8 +197,9 @@ scratch/romlog/catalog.json.
 | 0DB1DC | 06B1DC | 24 | data | 01FA68 |
 | 0DB200 | 06B200 | 20 | data | 01F91E |
 | 0DB242 | 06B242 | 56 | data | 01F91E |
-| 0DB2E8 | 06B2E8 | 16 | data | 01F91E |
-| 0DB3D0 | 06B3D0 | 40 | data | 01F91E |
+| 0DB2BA | 06B2BA | 30 | data | 01F91E |
+| 0DB2DA | 06B2DA | 50 | data | 01F91E |
+| 0DB3C8 | 06B3C8 | 48 | data | 01F91E |
 | 0DB438 | 06B438 | 118 | data | 01F91E |
 | 0DB53D | 06B53D | 111 | data | 01F91E |
 | 0DB5D3 | 06B5D3 | 22 | data | 01F91E |
@@ -213,11 +221,8 @@ scratch/romlog/catalog.json.
 | 0DDBC6 | 06DBC6 | 17 | data | 01FA68 |
 | 0DDBD7 | 06DBD7 | 17 | data | 01F91E |
 | 0DDBF9 | 06DBF9 | 17 | data | 01FA68 |
-| 0DDC1B | 06DC1B | 574 | data | 01F91E |
-| 0DDEFD | 06DEFD | 82 | data | 01F91E |
-| 0DE045 | 06E045 | 394 | data | 01F91E |
-| 0DE21C | 06E21C | 56 | data | 01F91E |
-| 0DE2C6 | 06E2C6 | 66 | data | 01F91E |
+| 0DDC1B | 06DC1B | 1481 | data | 01F91E |
+| 0DE1EB | 06E1EB | 285 | data | 01F91E |
 | 0DE42B | 06E42B | 28 | data | 01F91E |
 | 0DE50B | 06E50B | 236 | data | 01F91E |
 | 0DE64F | 06E64F | 164 | data | 01FA68 |
@@ -252,8 +257,10 @@ scratch/romlog/catalog.json.
 | 0EA000 | 072000 | 24576 | data | 01EC4B |
 | 0F8006 | 078006 | 20 | data | 01962C |
 | 0F8114 | 078114 | 62 | data | 01962C |
+| 0F8154 | 078154 | 62 | data | 01962C |
 | 0F81A4 | 0781A4 | 30 | data | 01962C |
-| 0F81C6 | 0781C6 | 62 | native |  |
+| 0F81D4 | 0781D4 | 30 | data | 01962C |
+| 0F820E | 07820E | 18 | native |  |
 | 0F826C | 07826C | 50 | data | 01962C |
 | 0F832C | 07832C | 26 | data | 01962C |
 | 0F8346 | 078346 | 30 | native |  |

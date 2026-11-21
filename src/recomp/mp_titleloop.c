@@ -830,95 +830,63 @@ void mp_00B046(void) {
  * ($04E2 = 0), just returns. If active, plays back recorded input.
  * ======================================================================== */
 void mp_0FC000(void) {
-    uint16_t demo = bus_wram_read16(0x04E2);
-    if (demo == 0) return;
+    /* JMP ($C009,X) on $04E2: state 0 returns, state 1 plays. */
+    if (bus_wram_read16(0x04E2) == 0) return;
 
-    /* Demo is active — play back recorded input */
-    /* Check if mouse/button activity should cancel demo */
-    uint16_t mouse_any = bus_wram_read16(0x04C6) |
-                         bus_wram_read16(0x04C8) |
-                         bus_wram_read16(0x04CA);
-    if (mouse_any != 0) goto end_demo;
+    /* Any real mouse input ends the demo. */
+    if ((bus_wram_read16(0x04C6) | bus_wram_read16(0x04C8) | bus_wram_read16(0x04CA)) != 0)
+        goto end_demo;
 
-    /* Read demo data from ROM.
-     * Demo data is in banks $10-$12, structured as 3 parallel streams
-     * (buttons, Y displacement, X displacement) indexed by $04E6. */
-    uint16_t data_idx = bus_wram_read16(0x04E6);
-    uint16_t bank_offset = bus_wram_read16(0x04E8);
-
-    /* Check for delay frames */
-    uint16_t delay = bus_wram_read16(0x04EA);
-    if (delay != 0) {
-        /* Still in delay — clear mouse state */
-        bus_wram_write8(0x04CA, 0x00);
-        bus_wram_write8(0x04C8, 0x00);
-        bus_wram_write8(0x04C6, 0x00);
-        bus_wram_write16(0x04EA, delay - 1);
-        goto advance;
-    }
-
-    /* Read next demo frame */
+    /* The three streams (buttons, Y, X) at $12/$11/$10 + $04E8, $8000 + $04E6. */
     {
-        uint8_t bank1 = 0x10 + (uint8_t)bank_offset;
-        uint8_t bank2 = 0x11 + (uint8_t)bank_offset;
-        uint8_t bank3 = 0x12 + (uint8_t)bank_offset;
-
-        uint8_t cmd = bus_read8(bank1, 0x8000 + data_idx);
-
-        if (cmd & 0x80) {
-            /* Delay command */
-            uint8_t delay_y = bus_read8(bank2, 0x8000 + data_idx);
-            uint8_t delay_x = bus_read8(bank3, 0x8000 + data_idx);
-            bus_wram_write8(0x04EB, delay_y);
-            bus_wram_write16(0x04EA, (uint16_t)delay_x);
+        uint16_t bo = bus_wram_read16(0x04E8);
+        uint16_t delay = bus_wram_read16(0x04EA);
+        if (delay == 0) {
+            uint16_t y = bus_wram_read16(0x04E6);
+            /* The pointers are pushed $10, $11, $12 and read back from the
+             * stack as [$01], [$05], [$09]: the last pushed ($12) first. */
+            uint8_t cmd = bus_read8((uint8_t)(0x12 + bo), (uint16_t)(0x8000 + y));
+            uint8_t s2 = bus_read8((uint8_t)(0x11 + bo), (uint16_t)(0x8000 + y));
+            uint8_t s3 = bus_read8((uint8_t)(0x10 + bo), (uint16_t)(0x8000 + y));
+            if (cmd & 0x80) {
+                /* A pause: its length into $04EB:$04EA (8-bit stores), no input. */
+                bus_wram_write8(0x04EB, s2);
+                bus_wram_write8(0x04EA, s3);
+                bus_wram_write8(0x04CA, 0x00);
+                bus_wram_write8(0x04C8, 0x00);
+                bus_wram_write8(0x04C6, 0x00);
+            } else {
+                bus_wram_write8(0x04CA, cmd);
+                bus_wram_write8(0x04C8, s2);
+                bus_wram_write8(0x04C6, s3);
+            }
+            /* $C118: the next entry; past $7FFF the other bank pair. */
+            uint16_t idx = (uint16_t)((bus_wram_read16(0x04E6) + 1) & 0x7FFF);
+            if (idx == 0) bus_wram_write16(0x04E8, (uint16_t)(bus_wram_read16(0x04E8) ^ 0x0003));
+            bus_wram_write16(0x04E6, idx);
+        } else {
+            /* In a pause: no input, one frame less (the index stays). */
             bus_wram_write8(0x04CA, 0x00);
             bus_wram_write8(0x04C8, 0x00);
             bus_wram_write8(0x04C6, 0x00);
-        } else {
-            /* Normal frame: buttons, Y disp, X disp */
-            bus_wram_write8(0x04CA, cmd);
-            bus_wram_write8(0x04C8, bus_read8(bank2, 0x8000 + data_idx));
-            bus_wram_write8(0x04C6, bus_read8(bank3, 0x8000 + data_idx));
+            bus_wram_write16(0x04EA, (uint16_t)(delay - 1));
         }
+        /* The end of this demo: its last index in the ROM's table at
+         * $0F:C10E, by demo number $0008. */
+        uint16_t n = bus_wram_read16(0x0008);
+        if (bus_wram_read16(0x04E6) != bus_read16(0x0F, (uint16_t)(0xC10E + (uint16_t)(n << 1))))
+            return;
     }
-
-advance:
-    /* Advance data pointer */
-    {
-        uint16_t idx = bus_wram_read16(0x04E6) + 1;
-        idx &= 0x7FFF;
-        if (idx == 0) {
-            /* Bank boundary — flip bank offset */
-            uint16_t bo = bus_wram_read16(0x04E8);
-            bo ^= 0x0003;
-            bus_wram_write16(0x04E8, bo);
-        }
-        bus_wram_write16(0x04E6, idx);
-
-        /* Check for end of demo data */
-        uint8_t demo_num = bus_wram_read8(0x0008);
-        static const uint16_t demo_ends[5] = {
-            0x1938, 0x3631, 0x56CD, 0x5B4D, 0x7E4D
-        };
-        if (demo_num < 5 && idx >= demo_ends[demo_num]) {
-            goto end_demo;
-        }
-    }
-    return;
 
 end_demo:
-    /* End demo — advance to next demo, fade out, reset */
+    /* The next demo (0..4), demo off, fade out, then the soft reset
+     * (JML $0082B8). */
     {
-        uint8_t demo_num = bus_wram_read8(0x0008);
-        demo_num++;
-        if (demo_num >= 5) demo_num = 0;
-        bus_wram_write8(0x0008, demo_num);
-
-        bus_wram_write16(0x04E2, 0x0000);  /* Demo no longer active */
-
-        mp_01E7C9();  /* Fade out */
-
-        /* Jump to soft reset (CODE_0082B8) */
+        uint16_t n = (uint16_t)(bus_wram_read16(0x0008) + 1);
+        if (n == 0x0005) n = 0;
+        bus_wram_write16(0x0008, n);
+        bus_wram_write16(0x04E2, 0x0000);
+        mp_01E7C9();
         func_table_call(0x0082B8);
     }
 }
@@ -933,12 +901,10 @@ void mp_0FC00E(void) {
     bus_wram_write16(0x04E8, 0x0000);
     bus_wram_write16(0x04EA, 0x0000);
 
-    /* Look up demo start offset */
-    uint8_t demo_num = bus_wram_read8(0x0008);
-    static const uint16_t demo_starts[5] = { 0, 0x1937, 0x3630, 0x56CC, 0x5B4C };
-    if (demo_num < 5) {
-        bus_wram_write16(0x04E6, demo_starts[demo_num]);
-    }
+    /* This demo's first index: the ROM's table at $0F:C033, by demo
+     * number $0008 (16-bit). */
+    uint16_t n = bus_wram_read16(0x0008);
+    bus_wram_write16(0x04E6, bus_read16(0x0F, (uint16_t)(0xC033 + (uint16_t)(n << 1))));
 
     bus_wram_write16(0x04E2, 0x0001);  /* Demo active */
 }

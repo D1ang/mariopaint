@@ -1452,7 +1452,7 @@ static bool phase_native(uint16_t h) {
         return true;
     }
     return h == 0xC012 || h == 0xAF14 || h == 0xC3C4 ||
-           h == 0xB0CA || h == 0xB153 || h == 0xB17B || h == 0xB27D;
+           h == 0xB0CA || h == 0xB153 || h == 0xB17B || h == 0xB27D || h == 0xB3FA || h == 0xB481;
 }
 /* $A60E ($0026, table $01:A615) and $A5F3 ($0024, table $01:A5FA) dispatch
  * through $01:E393; the handler runs where the JSR left S. */
@@ -1566,7 +1566,9 @@ void mp_01BBBE(void) {
         shot_bounds((uint8_t)x);
         uint8_t t = GRD(0x0563 + x);
         if (t == 0) { sting_4x4((uint8_t)x); continue; }
-        GWR(0x0563 + x, --t);
+        GWR(0x0563 + x, (uint8_t)(t - 1));
+        /* DEC $0563,X leaves A alone: the compares see the count from
+         * before the step. */
         if (t >= 0x60) { if (t == 0x70) GWR(0x04A3 + x, 0); continue; }
         GWR(0x04A3 + x, GRD(0x05B3));
         if (GRD(0x0040) != 0) continue;
@@ -1785,6 +1787,146 @@ void mp_01B841(void) {
     boss_sting();
 }
 
+/* $01:B9FB: the boss reddens: each of its 16 colours ($05B5..) gets 2
+ * more red (at most $1F) and 2 less green and blue (at least 0); then
+ * $B255. */
+static void mp_01B9FB(void) {
+    uint8_t p0 = cpu_get_p();
+    op_rep(0x30);
+    uint16_t a = 0;
+    for (int x = 0x1E; x >= 0; x -= 2) {
+        uint16_t v = bus_read16(g_cpu.DB, (uint16_t)(0x05B5 + x));
+        uint16_t r = (uint16_t)((v & 0x001F) + 2);
+        if (r & 0x0020) r = 0x001F;
+        v = (uint16_t)((v & 0xFFE0) | r);
+        uint16_t g = (uint16_t)(v & 0x03E0);
+        g = g >= 0x0040 ? (uint16_t)(g - 0x0040) : 0;
+        v = (uint16_t)((v & 0xFC1F) | g);
+        uint16_t b = (uint16_t)(v & 0x7C00);
+        b = b >= 0x0800 ? (uint16_t)(b - 0x0800) : 0;
+        v = (uint16_t)((v & 0x83FF) | b);
+        bus_write16(g_cpu.DB, (uint16_t)(0x05B5 + x), v);
+        a = b;
+    }
+    CPU_SET_A16(a);
+    g_cpu.X = 0xFFFE;
+    op_sep(0x30);
+    call_jsr(0x01B255);
+    cpu_set_p(p0);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+}
+
+/* $01:B7A9: step 3, the dive: at animation frame $12, sound $0D and the
+ * wait $0049 = 6, then step 4. */
+void mp_01B7A9(void) {
+    boss_anim();
+    if (GRD(0x0047) != 0x12) return;
+    CPU_SET_A8(0x0D);
+    call_jsl(0x01D328);
+    GWR(0x0049, 0x06);
+    GWR(0x05D7, GRD(0x05D7) + 1);
+}
+
+/* $01:BB3C: the boss's ring of 12 shots, from 12 free shot slots
+ * ($2E..$10) at its middle (x $014B+1, y $01CD+$30): heading 0 then +$40
+ * each, speed 4 for the first three and 9 after; the 4th and 8th of the
+ * ring are turned to $13 and $2D. Fewer than 12 free slots: none. Its four
+ * numbers live on the stack, as in the ROM. */
+static void mp_01BB3C(void) {
+    uint16_t s = g_cpu.S;
+    uint8_t px = (uint8_t)(GRD(0x014B) + 1), py = (uint8_t)(GRD(0x01CD) + 0x30);
+    uint8_t speed = 0x04, ang = 0x00;
+    int y = 0, x = 0x2E;
+    for (; x >= 0x10; x--) {
+        if (GRD(0x0353 + x) == 0) { GWR(0x05D9 + y, x); y++; }
+        if (y == 0x0C) break;
+    }
+    if (y == 0x0C) {
+        for (int k = 0x0B; k >= 0; k--) {
+            uint8_t t = GRD(0x05D9 + k);
+            GWR(0x0413 + t, px); GWR(0x03E3 + t, 0);
+            GWR(0x0473 + t, py); GWR(0x0443 + t, 0);
+            GWR(0x04A3 + t, speed);
+            GWR(0x04D3 + t, ang);
+            ang = (uint8_t)(ang + 0x40);
+            GWR(0x0503 + t, 0); GWR(0x0533 + t, 0);
+            GWR(0x0563 + t, 0x90);
+            GWR(0x0383 + t, 0); GWR(0x03B3 + t, 0);
+            GWR(0x0353 + t, GRD(0x0353 + t) + 1);
+            if (k < 0x09) speed = 0x09;
+            if (k == 0x08) ang = 0x13;
+            if (k == 0x04) ang = 0x2D;
+        }
+        y = -1;
+        x = GRD(0x05D9);
+    }
+    bus_wram_write8(s, px);
+    bus_wram_write8((uint16_t)(s - 1), py);
+    bus_wram_write8((uint16_t)(s - 2), speed);
+    bus_wram_write8((uint16_t)(s - 3), ang);
+    g_cpu.X = (uint16_t)((g_cpu.X & 0xFF00) | (uint8_t)x);
+    g_cpu.Y = (uint16_t)((g_cpu.Y & 0xFF00) | (uint8_t)y);
+    CPU_SET_A8(px);
+}
+
+/* $01:B7C7: step 4, the burst: when the wait $0049 reaches $0F, sound 4,
+ * the ring of shots ($BB3C), back to step 0. */
+void mp_01B7C7(void) {
+    boss_anim();
+    if (GRD(0x0049) != 0x0F) return;
+    CPU_SET_A8(0x04);
+    call_jsl(0x01D328);
+    mp_01BB3C();
+    GWR(0x05D7, 0);
+}
+
+/* $01:B8A8: step 7, reeling from a hit: when its animation ends, back to
+ * the step it was in ($05D8), its animation restored ($004B, $008C),
+ * blinking for $20 frames ($05D5). */
+void mp_01B8A8(void) {
+    uint8_t a = GRD(0x0047);
+    if (a) { CPU_SET_A8(a); return; }
+    GWR(0x05D7, GRD(0x05D8));
+    GWR(0x0048, 0);
+    GWR(0x0047, GRD(0x004B));
+    GWR(0x0088, GRD(0x008C));
+    GWR(0x05D5, 0x20);
+    CPU_SET_A8(0x20);
+}
+
+/* $01:B8C8: step 8, beaten: the count $0312 runs down ($00C9 = $FF at 0,
+ * the last animation $1E at $80); below $80 a few sparks a frame (4 minus
+ * count/32), each at a random spot around the boss (x +-$10, y +-$20) with
+ * one of the two spark tiles $0122/$0123, through $01:F91E. */
+void mp_01B8C8(void) {
+    uint8_t c = (uint8_t)(GRD(0x0312) - 1);
+    GWR(0x0312, c);
+    if (c == 0) GWR(0x00C9, 0xFF);
+    if (GRD(0x0312) == 0x80) GWR(0x0047, 0x1E);
+    uint8_t a = GRD(0x0312);
+    if (a & 0x80) { CPU_SET_A8(a); return; }
+    uint8_t n = (uint8_t)((uint8_t)~(a >> 5) + 4);
+    g_cpu.Y = (uint16_t)((g_cpu.Y & 0xFF00) | n);
+    CPU_SET_A8(n);
+    while (n) {
+        uint16_t s = g_cpu.S;
+        bus_wram_write8(s, n);                                     /* PHY */
+        g_cpu.S = (uint16_t)(s - 1);
+        call_jsl(0x01E20C);
+        g_cpu.X = (uint16_t)((g_cpu.X & 0xFF00) | (uint8_t)(((uint8_t)CPU_A16() & 0x1F) - 0x10 + GRD(0x014B)));
+        call_jsl(0x01E20C);
+        g_cpu.Y = (uint16_t)((g_cpu.Y & 0xFF00) | (uint8_t)(((uint8_t)CPU_A16() & 0x3F) - 0x20 + GRD(0x01CD)));
+        call_jsl(0x01E20C);
+        op_rep(0x20);
+        CPU_SET_A16((uint16_t)((CPU_A16() & 0x0001) + 0x0122));
+        call_jsl(0x01F91E);
+        op_sep(0x20);
+        g_cpu.S = s;
+        n = (uint8_t)(bus_wram_read8(s) - 1);                      /* PLY, DEY */
+        g_cpu.Y = (uint16_t)((g_cpu.Y & 0xFF00) | n);
+    }
+}
+
 /* $01:B62A: the hover timer off. */
 void mp_01B62A(void) { GWR(0x05E7, 0); }
 
@@ -1980,7 +2122,83 @@ void mp_01B27D(void) {
     cpu_set_p(p0);
 }
 
+/* $01:B3FA: phase 7, the beaten boss falls apart: its first two parts
+ * drawn once more, then 7 pieces ($014B..$0151 / $01CD..$01D3) from its
+ * middle plus the offsets at $01:B46C / $01:B473, each falling ($7F frames,
+ * speed from $01:B47A, $FE), the count $0312 = $40, next phase. */
+void mp_01B3FA(void) {
+    uint8_t p0 = cpu_get_p();
+    op_sep(0x30);
+    boss_part(0x00, 0x40);
+    boss_part(0x01, 0xB6);
+    uint16_t s = g_cpu.S;
+    uint8_t bx = GRD(0x014B), by = GRD(0x01CD);
+    bus_wram_write8(s, bx);
+    bus_wram_write8((uint16_t)(s - 1), by);
+    for (int x = 6; x >= 0; x--) {
+        GWR(0x014B + x, (uint8_t)(bx + bus_read8(0x01, (uint16_t)(0xB46C + x))));
+        GWR(0x010A + x, 0);
+        GWR(0x01CD + x, (uint8_t)(by + bus_read8(0x01, (uint16_t)(0xB473 + x))));
+        GWR(0x018C + x, 0);
+        GWR(0x00C9 + x, 0);
+        GWR(0x020E + x, 0x7F);
+        GWR(0x024F + x, bus_read8(0x01, (uint16_t)(0xB47A + x)));
+        GWR(0x0290 + x, 0xFE);
+        GWR(0x02D1 + x, 0);
+        GWR(0x0312 + x, 0);
+    }
+    GWR(0x0312, 0x40);
+    GWR(0x0024, GRD(0x0024) + 1);
+    g_cpu.X = (uint16_t)((g_cpu.X & 0xFF00) | 0xFF);
+    CPU_SET_A8(bx);
+    cpu_set_p(p0);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+}
+
+/* $01:B481: phase 8, the pieces fall: each one still on screen ($00C9,x
+ * clear) moves ($BC7B; its fall slows to $3F once speed + count drop below
+ * $40) and leaves at the edges (x outside $08..$F7, y from $E0); those
+ * left are drawn as tile $0170 + piece through $01:F91E. When the count
+ * $0312 runs out, next phase. */
+void mp_01B481(void) {
+    uint8_t p0 = cpu_get_p();
+    op_sep(0x30);
+    for (int x = 6; x >= 0; x--) {
+        g_cpu.X = (uint16_t)x;
+        if (GRD(0x00C9 + x)) continue;
+        call_jsr(0x01BC7B);
+        if ((unsigned)GRD(0x020E + x) + GRD(0x0290 + x) < 0x40) {
+            GWR(0x020E + x, 0x3F);
+            GWR(0x0290 + x, 0);
+        }
+        uint8_t a = GRD(0x014B + x);
+        if (a < 0x08 || a >= 0xF8 || GRD(0x01CD + x) >= 0xE0) GWR(0x00C9 + x, GRD(0x00C9 + x) + 1);
+    }
+    for (int x = 6; x >= 0; x--) {
+        g_cpu.X = (uint16_t)x;
+        if (GRD(0x00C9 + x)) continue;
+        uint16_t s = g_cpu.S;
+        bus_wram_write8(s, (uint8_t)x);                            /* PHX */
+        g_cpu.S = (uint16_t)(s - 1);
+        op_rep(0x30);
+        g_cpu.Y = GRD(0x01CD + x);
+        g_cpu.X = GRD(0x014B + x);
+        CPU_SET_A16((uint16_t)(0x0170 + x));
+        call_jsl(0x01F91E);
+        op_sep(0x30);
+        g_cpu.S = s;
+        g_cpu.X = bus_wram_read8(s);                               /* PLX */
+    }
+    g_cpu.X = (uint16_t)((g_cpu.X & 0xFF00) | 0xFF);
+    GWR(0x0312, GRD(0x0312) - 1);
+    if (GRD(0x0312) == 0) GWR(0x0024, GRD(0x0024) + 1);
+    cpu_set_p(p0);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+}
+
 void mp_register_gnat(void) {
+    func_table_register(0x01B3FA, mp_01B3FA);
+    func_table_register(0x01B481, mp_01B481);
     func_table_register(0x01B0CA, mp_01B0CA);
     func_table_register(0x01B153, mp_01B153);
     func_table_register(0x01B17B, mp_01B17B);
@@ -1992,6 +2210,12 @@ void mp_register_gnat(void) {
     func_table_register(0x01B784, mp_01B784);
     func_table_register(0x01B7E3, mp_01B7E3);
     func_table_register(0x01B841, mp_01B841);
+    func_table_register(0x01B7A9, mp_01B7A9);
+    func_table_register(0x01B7C7, mp_01B7C7);
+    func_table_register(0x01B8A8, mp_01B8A8);
+    func_table_register(0x01B8C8, mp_01B8C8);
+    func_table_register(0x01BB3C, mp_01BB3C);
+    func_table_register(0x01B9FB, mp_01B9FB);
     func_table_register(0x01B62A, mp_01B62A);
     func_table_register(0x01B62E, mp_01B62E);
     func_table_register(0x01B66F, mp_01B66F);

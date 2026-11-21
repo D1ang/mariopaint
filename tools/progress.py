@@ -42,6 +42,18 @@ def main():
             p = line.split()
             results[int(p[0], 16)] = p[1]
 
+    # Routines checked in their own scenario runs (conformance.py --scenario,
+    # the INNER sets) and enabled in the launcher: main.c's k_verified.
+    mc = open(os.path.join(ROOT, "src", "main", "main.c")).read()
+    kv = mc[mc.index("k_verified[] ="):]
+    kv = kv[:kv.index(";")]
+    for a in re.findall(r"([0-9A-F]{6})[LF]*", "".join(re.findall(r'"([^"]*)"', kv))):
+        results.setdefault(int(a, 16), "PASS")
+    # Frame drivers present a frame themselves: conformance.py does not check
+    # them, they wait for the next frame in both versions.
+    dl = mc[mc.index("k_frame_drivers[] ="):]
+    drivers = {int(a, 16) for a in re.findall(r"([0-9A-F]{6})", dl[:dl.index(";")])}
+
     executed = set()
     ep = os.path.join(ROOT, "scratch", "conf", "executed.txt")
     if os.path.exists(ep):
@@ -52,6 +64,8 @@ def main():
     for f in sorted(functions | ported):
         if f in results:
             st = "verified" if results[f] == "PASS" else ("failing" if f in ported else "todo")
+        elif f in drivers and f in ported:
+            st = "driver"
         else:
             st = "untested" if f in ported else "todo"
         rows.append((f, st, f in executed, len(edges.get(f, ()))))
@@ -71,7 +85,8 @@ def main():
            f"| verified | {c['verified']} | C version matches the ROM, runs natively |",
            f"| failing | {c['failing']} | C version exists, differs from the ROM |",
            f"| untested | {c['untested']} | C version exists, the tour never runs it |",
-           f"| todo | {c['todo']} | no C version yet |", "",
+           f"| todo | {c['todo']} | no C version yet |",
+           f"| driver | {c['driver']} | frame driver: C version, not compared (it waits for the frame) |", "",
            f"Of the **{played}** routines the tour runs (call targets plus the jump-entered",
            f"handlers), **{played_ok}** are verified ({100 * played_ok // max(played, 1)}%) and "
            f"{played_c} have a C version.",
@@ -89,7 +104,7 @@ def main():
     os.makedirs(os.path.join(ROOT, "docs"), exist_ok=True)
     Path(os.path.join(ROOT, "docs", "PROGRESS.md")).write_text("\n".join(out))
     print(f"progress: {c['verified']}/{total} verified, {c['failing']} failing, "
-          f"{c['untested']} untested, {c['todo']} todo; tour-run {played_ok}/{played} -> docs/PROGRESS.md")
+          f"{c['untested']} untested, {c['driver']} drivers, {c['todo']} todo; tour-run {played_ok}/{played} -> docs/PROGRESS.md")
 
 
 if __name__ == "__main__":

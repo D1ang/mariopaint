@@ -88,12 +88,29 @@ JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
                 "00A509", "00A55B", "00A637", "00A6F7", "00A792", "00A8A8", "00A8FF", "00A95D", "00A9BE", "00A617"]
 
 
+# Gnat Attack's boss: the phase handlers ($A5F3 enters them through $01:E393)
+# and the boss's steps ($B5F4/$B60F jump to them through tables).
+BOSS_PHASES = ["01B0CA", "01B153", "01B17B", "01B27D", "01B3FA", "01B481"]
+BOSS_STEPS = ["01B62A", "01B62E", "01B66F", "01B6A1", "01B6AA", "01B70F", "01B784", "01B7A9", "01B7C7",
+              "01B7E3", "01B841", "01B8A8", "01B8C8"]
+JUMP_ENTERED += BOSS_PHASES + BOSS_STEPS
+
 # Scenarios checked without the routines listed (see check_scenario).
 GNAT_LOOP = {"01A505", "01A5F3", "01A60E", "01C012", "01AF14", "01AFDB", "01C3C4",
              "01B0CA", "01B153", "01B17B", "01B27D"}
 INNER = {"gnatinner": GNAT_LOOP, "gnatinner2": GNAT_LOOP, "gnatinner3": GNAT_LOOP,
          # and once more without the pause menu, for the routines inside it
          "gnatinner4": GNAT_LOOP | {"01C5F8", "01C622"},
+         # the boss phases alone (their dispatcher $A5F3 and the loop off),
+         # then the boss's steps alone (their dispatchers off too)
+         # The demo: the title loop hands over to it by unwinding the stack
+         # (the title's stack point), which cuts one call of the per-frame
+         # demo input ($0F:C000) and of $8A75 short; they are checked in
+         # the other scenarios. ($0F:C000's playback itself matched the ROM
+         # on all 4070 calls of a run with only it under check.)
+         "demo": {"0FC000", "008A75"},
+         "gnatbossinner": GNAT_LOOP - set(BOSS_PHASES),
+         "gnatbossinner2": GNAT_LOOP | {"01B5F4", "01B60F"},
          # the rocket ($A9BE) with the clicks that lead to it
          "rocketinner": {"0087A8", "008BEB", "008BA9", "009598", "00A9BE"},
          # the wave ($A617, $01:CFD5) likewise

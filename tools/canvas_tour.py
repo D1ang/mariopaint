@@ -61,6 +61,11 @@ SCENARIOS = {
     # title states of $01:8308); a while to watch each, then Mario.
     "title": ["notitle"] + [pt for x in (62, 86, 107, 118, 130, 144, 163, 174, 190, 203)
                             for pt in ((x, 72), ("wait", 240))] + [(128, 168)],
+    # The title left alone: after $800 idle frames the demo ($0F:C00E)
+    # plays ($0F:C000 feeds its recorded mouse input). The run ends while
+    # it plays: its end jumps to the soft reset ($0082B8), which the
+    # validator cannot compare.
+    "demo": ["notitle", ("wait", 2200)] + [("wait", 300)] * 5 + [("wait", 290)],
     # The title clicked through another way: the random pick of $01:E20C at
     # start ($0547) lands on the other sound bank and the red-framed canvas.
     "title2": ["notitle"] + [(x, y) for y in (40, 64) for x in (40, 72, 104, 136, 168, 200, 224)]
@@ -170,6 +175,17 @@ SCENARIOS = {
     "gnatinner2": None,
     "gnatinner3": None,
     "gnatinner4": None,
+    # Gnat Attack's boss: the wave count set to the last wave, the gnats of
+    # that wave cleared, then swats at the boss as it moves.
+    "gnatboss": [MODE_BAR, (216, 212), ("wait", 200), (128, 112), ("wait", 200), ("poke", "7F0016=04"),
+                 ("poke", "7F05A0=00"), ("poke", "7F05A1=00"), ("poke", "7F05A2=00"), ("poke", "7F05A3=00"),
+                 ("wait", 120)] + [
+        # swats around where the boss hangs (lives kept up); the hit count
+        # set near the end so it is beaten and its last steps run
+        pt for i in range(42) for pt in ((("poke", "7F0018=05"),) + ((("poke", "7F00C9=13"),) if i == 24 else ()) +
+                                         ((80 + (i * 29) % 100, 58 + (i % 4) * 8), ("wait", 25)))] + [("wait", 100)],
+    "gnatbossinner": None,
+    "gnatbossinner2": None,
     # The title clicks again, checked with the title states alone (their
     # dispatcher $01:8308 not under check).
     "titlestates": None,
@@ -185,6 +201,8 @@ SCENARIOS["gnatinner"] = SCENARIOS["gnatwaves"]
 SCENARIOS["gnatinner2"] = SCENARIOS["gnat"]
 SCENARIOS["gnatinner3"] = SCENARIOS["gnatpause"]
 SCENARIOS["gnatinner4"] = SCENARIOS["gnatpause"]
+SCENARIOS["gnatbossinner"] = SCENARIOS["gnatboss"]
+SCENARIOS["gnatbossinner2"] = SCENARIOS["gnatboss"]
 
 SRAM_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scratch", "sram", "saved.srm")
 
