@@ -336,31 +336,30 @@ void mp_009C25(void) {
  * Initiates a flood fill at the cursor position.
  * ======================================================================== */
 void mp_009DAB(void) {
-    /* Save cursor position */
-    bus_wram_write16(0x0086, bus_wram_read16(0x04DC));
-    bus_wram_write16(0x0088, bus_wram_read16(0x04DE));
-
-    /* Get fill color from tool high byte */
-    uint16_t fill_idx = (bus_wram_read16(0x04D0) >> 8) & 0x0F;
-    /* Look up fill parameter from ROM table */
-    uint8_t fill_param = bus_read8(0x00, 0x9DEB + fill_idx);
-    bus_wram_write16(0x006E, fill_param);
-
-    /* Sound */
-    op_lda_imm16(0x0025);
-    func_table_call(0x01D368);
-
-    /* Set audio state for fill */
+    /* $00:9DAB: the fill tool. The click point into DP $86/$88, the fill's
+     * pattern ($00:9DEB by the colour in $04D0's high byte) into DP $6E,
+     * sound $25, the fill ($B3FF), then 8 frames with the count on the
+     * stack (PHY/PLY around each frame, as in the ROM). */
+    bus_write16(0x00, (uint16_t)(g_cpu.DP + 0x86), bus_wram_read16(0x04DC));
+    bus_write16(0x00, (uint16_t)(g_cpu.DP + 0x88), bus_wram_read16(0x04DE));
+    uint16_t x = (uint16_t)((bus_wram_read16(0x04D0) & 0x0F00) >> 8);
+    g_cpu.X = x;
+    bus_write16(0x00, (uint16_t)(g_cpu.DP + 0x6E), bus_read8(0x00, (uint16_t)(0x9DEB + x)));
+    CPU_SET_A16(0x0025);
+    call_jsl(0x01D368);
     bus_wram_write16(0x053B, 0x0004);
     bus_wram_write16(0x053D, 0x0000);
     bus_wram_write16(0x053F, 0x0003);
-
-    /* Execute fill */
-    func_table_call(0x00B3FF);
-
-    /* Wait 8 frames */
-    for (int i = 8; i > 0 && !g_quit; i--) {
-        mp_01E2CE();
+    call_jsr(0x00B3FF);
+    for (uint16_t y = 8; y != 0 && !g_quit; ) {
+        uint16_t sp = g_cpu.S;
+        bus_wram_write8(sp, (uint8_t)(y >> 8));
+        bus_wram_write8((uint16_t)(sp - 1), (uint8_t)y);
+        g_cpu.S = (uint16_t)(sp - 2);
+        call_jsl(0x01E2CE);
+        g_cpu.S = sp;
+        y = (uint16_t)(bus_wram_read16((uint16_t)(sp - 1)) - 1);
+        g_cpu.Y = y;
     }
 }
 

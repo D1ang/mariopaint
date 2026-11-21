@@ -98,6 +98,10 @@ JUMP_ENTERED += BOSS_PHASES + BOSS_STEPS
 # freehand), the masked single-pixel draw ($B051), the window tables
 # ($01:D3BA).
 JUMP_ENTERED += ["00AAEF", "00B32D", "00E64B", "009CC7"]
+# Called once at boot, before the profiler's window ($84D5, $01:8328) or
+# at the soft reset ($82D5), or through the tool table ($94E5, the empty
+# slot): checked wherever a scenario reaches them.
+JUMP_ENTERED += ["0084D5", "018328", "0082D5", "0094E5"]
 
 # Scenarios checked without the routines listed (see check_scenario).
 GNAT_LOOP = {"01A505", "01A5F3", "01A60E", "01C012", "01AF14", "01AFDB", "01C3C4",

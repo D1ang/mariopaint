@@ -761,15 +761,6 @@ void mp_009C1B(void) {
     } while (n != 0);
 }
 
-/* ========================================================================
- * $00:9F50 — Stamp commit
- *
- * Commits the stamp placement to the canvas.
- * ======================================================================== */
-void mp_009F50(void) {
-    /* Commit the stamp preview to canvas permanently */
-    func_table_call(0x00B051);  /* Final pixel write */
-}
 
 /* ========================================================================
  * $00:A0EB — Tool-specific initialization dispatch
@@ -848,7 +839,6 @@ void mp_register_shapes(void) {
     func_table_register(0x00B910, mp_00B910);
     func_table_register(0x00B926, mp_00B926);
     func_table_register(0x009C1B, mp_009C1B);
-    func_table_register(0x009F50, mp_009F50);
     func_table_register(0x00A0EB, mp_00A0EB);
     func_table_register(0x0082D5, mp_0082D5);
     func_table_register(0x018D35, mp_018D35);

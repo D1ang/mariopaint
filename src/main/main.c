@@ -99,7 +99,9 @@ static const char k_verified[] =
     /* the level's end after the boss */
     "01B4F4F,01BFA8F,01C133,01C18D,01C30F,01CD93,"
     /* checked with their callers off (drawinner, modesinner, shapesinner*) */
-    "00AAEF,00DE46F,00E2CC,009CC7F,00B32D";
+    "00AAEF,00DE46F,00E2CC,009CC7F,00B32D,"
+    /* called once at boot or reset, or through the tool table */
+    "0082D5,0094E5,018328";
 
 /* Routines that present a frame: $01:E2CE waits for the NMI; $01:E794 and
  * $01:E7C9 fade the screen in/out over several frames. */

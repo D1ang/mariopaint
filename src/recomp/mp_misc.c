@@ -22,100 +22,6 @@
 extern bool g_quit;
 
 
-/* ========================================================================
- * $00:9E76 — Stamp placement logic
- *
- * Handles the stamp tool placement state machine.
- * State transitions: position → place → done.
- * ======================================================================== */
-void mp_009E76(void) {
-    uint8_t draw = bus_wram_read8(0x0020);
-
-    if (draw < 2) {
-        /* Positioning phase */
-        bus_wram_write16(0x1998, 0x0000);
-        bus_wram_write16(0x199A, 0x0001);
-
-        bus_wram_write16(0x0026, bus_wram_read16(0x04DC));
-        bus_wram_write16(0x0028, bus_wram_read16(0x04DE));
-
-        func_table_call(0x00ADFB);  /* Draw stamp preview */
-
-        uint16_t buttons = bus_wram_read16(0x04CA);
-        uint8_t new_draw = (buttons & 0x0010) ? 2 : 1;
-        bus_wram_write8(0x0020, new_draw);
-        return;
-    }
-
-    if (draw == 3) {
-        /* Placement phase — check for click to confirm */
-        uint16_t buttons = bus_wram_read16(0x04CA);
-        if (buttons & 0x0020) {
-            goto place_stamp;
-        }
-
-        /* Allow moving stamp with mouse */
-        uint16_t mode = bus_wram_read16(0x19C0);
-        if (mode == 0) return;
-
-        /* Track cursor displacement for stamp movement */
-        int16_t dx = (int16_t)bus_wram_read16(0x04DC) - (int16_t)bus_wram_read16(0x099B);
-        bus_wram_write16(0x0022, bus_wram_read16(0x0022) + dx);
-        bus_wram_write16(0x0026, bus_wram_read16(0x0026) + dx);
-
-        int16_t dy = (int16_t)bus_wram_read16(0x04DE) - (int16_t)bus_wram_read16(0x099D);
-        bus_wram_write16(0x0024, bus_wram_read16(0x0024) + dy);
-        bus_wram_write16(0x0028, bus_wram_read16(0x0028) + dy);
-
-        bus_wram_write16(0x099B, bus_wram_read16(0x04DC));
-        bus_wram_write16(0x099D, bus_wram_read16(0x04DE));
-
-        bus_wram_write16(0x1996, 0x0001);
-        return;
-    }
-
-    /* draw == 2: just placed — compute stamp bounds */
-    bus_wram_write16(0x053B, 0x0000);
-    op_lda_imm16(0x0027);
-    func_table_call(0x01D368);
-
-    /* Normalize stamp bounds (ensure min < max) */
-    {
-        int16_t x1 = (int16_t)bus_wram_read16(0x0022);
-        int16_t x2 = (int16_t)bus_wram_read16(0x0026);
-        if (x1 > x2) {
-            bus_wram_write16(0x0022, (uint16_t)x2);
-            bus_wram_write16(0x0026, (uint16_t)x1);
-        }
-        int16_t y1 = (int16_t)bus_wram_read16(0x0024);
-        int16_t y2 = (int16_t)bus_wram_read16(0x0028);
-        if (y1 > y2) {
-            bus_wram_write16(0x0024, (uint16_t)y2);
-            bus_wram_write16(0x0028, (uint16_t)y1);
-        }
-    }
-
-    /* Execute stamp placement */
-    func_table_call(0x01D75B);
-
-    /* Center cursor on stamp */
-    uint16_t mode = bus_wram_read16(0x19C0);
-    if (mode == 0) {
-        uint16_t cx = (bus_wram_read16(0x0022) + bus_wram_read16(0x0026)) >> 1;
-        bus_wram_write16(0x04DC, cx);
-        bus_wram_write16(0x099B, cx);
-        uint16_t cy = (bus_wram_read16(0x0024) + bus_wram_read16(0x0028)) >> 1;
-        bus_wram_write16(0x04DE, cy);
-        bus_wram_write16(0x099D, cy);
-    }
-
-    bus_wram_write8(0x0020, bus_wram_read8(0x0020) + 1);
-    return;
-
-place_stamp:
-    /* Commit stamp */
-    func_table_call(0x009F50);
-}
 
 /* ========================================================================
  * $00:9760 — Right-click / undo handler
@@ -2954,7 +2860,6 @@ void mp_register_misc(void) {
     func_table_register(0x01EDCA, mp_01EDCA);
     func_table_register(0x01EFB9, mp_01EFB9);
 
-    func_table_register(0x009E76, mp_009E76);
     func_table_register(0x009760, mp_009760);
     func_table_register(0x00E233, mp_00E233);
     /* $00:E6DA is no routine (a point inside $E64F, which has its C version). */

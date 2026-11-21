@@ -144,7 +144,6 @@ void mp_018CBF(void);  /* Title input check */
 void mp_0FC000(void);  /* Bank 0F: demo dispatch */
 void mp_0FC00E(void);  /* Bank 0F: start demo */
 void mp_008BEB(void);  /* Canvas click handler */
-void mp_008B40(void);  /* Wrapper: click handler */
 void mp_008B44(void);  /* Wrapper: cursor render */
 
 /* Drawing Tools (mp_tools.c) */
@@ -203,7 +202,6 @@ void mp_01833F(void);  /* Title state 1: animate */
 /* Miscellaneous (mp_misc.c) */
 void mp_register_misc(void);
 void mp_009CC7(void);  /* the shape tools' part of $9C25 */
-void mp_009E76(void);  /* Stamp placement logic */
 void mp_009760(void);  /* Right-click / undo handler */
 void mp_00E0D4(void);  /* Palette color compute */
 void mp_00DF1C(void);  /* Palette display store */
@@ -226,7 +224,6 @@ void mp_00B32D(void);  /* Masked draw */
 /* $00:B610: the fill queue push, inside mp_00B3FF (mp_draw.c). */
 void mp_00B7D6(void);  /* Spray can effect */
 void mp_009C1B(void);  /* Draw completion */
-void mp_009F50(void);  /* Stamp commit */
 void mp_00A0EB(void);  /* Tool init dispatch */
 void mp_0082D5(void);  /* Reset delay */
 void mp_018D35(void);  /* Title logo click */

@@ -110,6 +110,13 @@ SCENARIOS = {
     "fill": [(62, 212), ("drag", 60, 60, 160, 60), ("drag", 160, 60, 160, 140),
              ("drag", 160, 140, 60, 140), ("drag", 60, 140, 60, 60), ("poke", "7E04D0=05"),
              (110, 100), ("wait", 400), ("poke", "7E04D0=05"), (200, 170), ("wait", 400)],
+    # More fills (the fill tool, $9DAB/$B3FF): one fill seldom gets a call
+    # without an interrupt in it, so several, over the outlines and the
+    # areas they leave.
+    "fill2": [(62, 212), ("drag", 60, 60, 160, 60), ("drag", 160, 60, 160, 140),
+              ("drag", 160, 140, 60, 140), ("drag", 60, 140, 60, 60)] +
+             [pt for x, y in ((110, 100), (40, 40), (110, 100), (180, 150), (60, 60), (100, 180))
+              for pt in (("poke", "7E04D0=05"), (x, y), ("wait", 300))],
     # The shapes from the size panel (bottom bar 128-143, then slot n: $AE =
     # (n-1)/4+1): ellipse ($AB8A), rectangle ($AB26), line ($AAFB).
     "shapes": [(135, 212), (168, 212), ("drag", 80, 70, 150, 130), ("wait", 100),

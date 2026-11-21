@@ -909,12 +909,6 @@ void mp_0FC00E(void) {
     bus_wram_write16(0x04E2, 0x0001);  /* Demo active */
 }
 
-/* ========================================================================
- * $00:8B40 — Wrapper: calls 008BEB (canvas click handler)
- * ======================================================================== */
-void mp_008B40(void) {
-    mp_008BEB();
-}
 
 /* ========================================================================
  * $00:8B44 — Wrapper: calls 009378 (cursor rendering)
@@ -958,6 +952,5 @@ void mp_register_titleloop(void) {
     func_table_register(0x0FC000, mp_0FC000);
     func_table_register(0x0FC00E, mp_0FC00E);
     func_table_register(0x008BEB, mp_008BEB);
-    func_table_register(0x008B40, mp_008B40);
     func_table_register(0x008B44, mp_008B44);
 }
