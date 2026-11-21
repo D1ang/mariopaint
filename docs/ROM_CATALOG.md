@@ -8,12 +8,12 @@ scratch/romlog/catalog.json.
 | kind | bytes | share |
 |---|---:|---:|
 | apu | 228182 | 21.8% |
-| data | 154516 | 14.7% |
+| data | 154754 | 14.8% |
 | vram | 118528 | 11.3% |
-| code | 40358 | 3.8% |
+| code | 40979 | 3.9% |
 | cgram | 1024 | 0.1% |
-| native | 287 | 0.0% |
-| (not reached by the tours) | 505681 | 48.2% |
+| native | 300 | 0.0% |
+| (not reached by the tours) | 504809 | 48.1% |
 
 ## Asset regions (DMA targets and CPU-read data)
 
@@ -63,7 +63,7 @@ scratch/romlog/catalog.json.
 | 018D85 | 008D85 | 20 | data | 018D35 |
 | 019E24 | 009E24 | 16 | data | 019DFE |
 | 019E3C | 009E3C | 80 | data | 019DFE |
-| 01A5FA | 00A5FA | 18 | data | 01E393 |
+| 01A5FA | 00A5FA | 20 | data | 01E393 |
 | 01AA20 | 00AA20 | 36 | data | 01BD87 |
 | 01AC3C | 00AC3C | 48 | data | 01BD87 |
 | 01B348 | 00B348 | 22 | data | 01BD87 |
@@ -74,11 +74,16 @@ scratch/romlog/catalog.json.
 | 01B46C | 00B46C | 21 | data | 01B3FA |
 | 01B5FB | 00B5FB | 20 | data | 01E393 |
 | 01B616 | 00B616 | 20 | data | 01E393 |
+| 01BFD6 | 00BFD6 | 60 | data | 01BFA8 |
 | 01C0BF | 00C0BF | 20 | data | 01C012 |
 | 01C10F | 00C10F | 36 | data | 01C0D3 |
+| 01C179 | 00C179 | 20 | data | 01C133 |
+| 01C2D3 | 00C2D3 | 54 | data | 01C18D |
+| 01C39A | 00C39A | 18 | data | 01BD87 |
 | 01C7F2 | 00C7F2 | 364 | data | 01C622 |
 | 01CA78 | 00CA78 | 32 | data | 01C9EF |
 | 01CACF | 00CACF | 65 | data | 01CAAE |
+| 01CDCD | 00CDCD | 20 | data | 01CD93 |
 | 01CE4B | 00CE4B | 153 | data | 01CDE1 |
 | 01CF16 | 00CF16 | 21 | data | 01CDE1 |
 | 01CF65 | 00CF65 | 79 | data | 01CDE1 |
@@ -215,7 +220,7 @@ scratch/romlog/catalog.json.
 | 0DD4F1 | 06D4F1 | 375 | data | 01F91E |
 | 0DD6A8 | 06D6A8 | 187 | data | 01F91E |
 | 0DD829 | 06D829 | 571 | data | 01F91E |
-| 0DDAB4 | 06DAB4 | 27 | data | 01F91E |
+| 0DDA72 | 06DA72 | 93 | data | 01F91E |
 | 0DDACF | 06DACF | 72 | data | 01FA68 |
 | 0DDBA4 | 06DBA4 | 34 | data | 01F91E |
 | 0DDBC6 | 06DBC6 | 17 | data | 01FA68 |

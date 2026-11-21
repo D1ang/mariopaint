@@ -1452,7 +1452,7 @@ static bool phase_native(uint16_t h) {
         return true;
     }
     return h == 0xC012 || h == 0xAF14 || h == 0xC3C4 ||
-           h == 0xB0CA || h == 0xB153 || h == 0xB17B || h == 0xB27D || h == 0xB3FA || h == 0xB481;
+           h == 0xB0CA || h == 0xB153 || h == 0xB17B || h == 0xB27D || h == 0xB3FA || h == 0xB481 || h == 0xB4F4;
 }
 /* $A60E ($0026, table $01:A615) and $A5F3 ($0024, table $01:A5FA) dispatch
  * through $01:E393; the handler runs where the JSR left S. */
@@ -2196,7 +2196,243 @@ void mp_01B481(void) {
     if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
 }
 
+extern bool g_quit;
+
+/* ---- The end of a level (phase 9, $01:B4F4) and its helpers. ---- */
+
+#define R16(o)    bus_read16(g_cpu.DB, (uint16_t)(o))
+#define W16(o, v) bus_write16(g_cpu.DB, (uint16_t)(o), (uint16_t)(v))
+#define ROM1(a)   bus_read8(0x01, (uint16_t)(a))
+
+static void push16(uint16_t v) { push8((uint8_t)(v >> 8)); push8((uint8_t)v); }
+static uint16_t pull16(void) {
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    return bus_wram_read16((uint16_t)(g_cpu.S - 1));
+}
+
+/* $01:CD93: queue the VRAM job described by the five words at $01:CDD7
+ * in the job list ($0182 + $0204), the list then marked ready ($0202).
+ * The ROM points at the words through a long pointer on the stack. */
+static void mp_01CD93(void) {
+    uint16_t d0 = g_cpu.DP;
+    push16(d0); push16(0x0001); push16(0xCDD7);
+    g_cpu.DP = g_cpu.S;
+    bus_wram_write16(0x0202, 0x0000);
+    uint16_t x = bus_wram_read16(0x0204);
+    for (uint16_t y = 0; y != 0x000A; y += 2, x += 2)
+        bus_wram_write16((uint16_t)(0x0182 + x), bus_read16(0x01, (uint16_t)(0xCDD7 + y)));
+    x--;
+    bus_wram_write16(0x0204, x);
+    bus_wram_write16(0x0202, 0x0001);
+    g_cpu.X = x; g_cpu.Y = 0x000A;
+    pull16();
+    CPU_SET_A16(pull16());
+    g_cpu.DP = pull16();
+}
+
+/* $01:BFA8: the tally screen's colours: palette set $AE, then 15 colours
+ * each from $01:BFD6 / $01:BFF4 into the palette copy at $7E:3250 /
+ * $7E:3290, uploaded ($DECD); a frame; fade in ($D308, 15). */
+static void mp_01BFA8(void) {
+    CPU_SET_A16(0x00AE);
+    call_jsl(0x01E042);
+    for (int x = 0x1C; x >= 0; x -= 2) {
+        bus_write16(0x7E, (uint16_t)(0x3250 + x), bus_read16(0x01, (uint16_t)(0xBFD6 + x)));
+        bus_write16(0x7E, (uint16_t)(0x3290 + x), bus_read16(0x01, (uint16_t)(0xBFF4 + x)));
+    }
+    g_cpu.X = 0xFFFE;
+    call_jsl(0x01DECD);
+    call_jsl(0x01E2CE);
+    CPU_SET_A16(0x000F);
+    call_jsl(0x01D308);
+}
+
+/* $01:C133: the tally's ten actors at their places ($01:C179 / $01:C183),
+ * everything else of them cleared; the first two set moving. */
+static void mp_01C133(void) {
+    uint8_t p0 = cpu_get_p();
+    op_sep(0x30);
+    for (int x = 9; x >= 0; x--) {
+        GWR(0x014B + x, ROM1(0xC179 + x)); GWR(0x010A + x, 0);
+        GWR(0x01CD + x, ROM1(0xC183 + x)); GWR(0x018C + x, 0);
+        GWR(0x0047 + x, 0); GWR(0x0088 + x, 0); GWR(0x00C9 + x, 0);
+        GWR(0x020E + x, 0); GWR(0x024F + x, 0); GWR(0x0290 + x, 0);
+        GWR(0x02D1 + x, 0); GWR(0x0312 + x, 0);
+    }
+    GWR(0x05E8, 0); GWR(0x05E9, 0);
+    GWR(0x0212, 0x20); GWR(0x0253, 0x40);
+    g_cpu.X = 0xFF;
+    cpu_set_p(p0);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+}
+
+/* $01:C18D: one frame of the tally's actors. Actor 4 follows the moves at
+ * $01:C2D3 (three bytes each: two speeds and a length; all $FF: it stops
+ * and actor 4 is set going instead), actor 5 those at $01:C2F4 once actor 4
+ * has crossed x $08; actors 6..9 (as many as levels done, $0014) start when
+ * on screen. At move 2 of actor 5 the boss's animation, at move 4 the
+ * next round. Actors 5..9 left of x $08 stop. */
+static void mp_01C18D(void) {
+    uint8_t p0 = cpu_get_p();
+    op_sep(0x30);
+    if (GRD(0x0316) == 0) {
+        uint8_t x = (uint8_t)(GRD(0x05E8) * 3);
+        uint8_t t0 = ROM1(0xC2D3 + x), t1 = ROM1(0xC2D4 + x), t2 = ROM1(0xC2D5 + x);
+        if ((uint8_t)(t0 & t1 & t2) == 0xFF) {
+            GWR(0x0212, 0); GWR(0x0253, 0); GWR(0x0294, 0); GWR(0x02D5, 0);
+            GWR(0x0213, 0x20); GWR(0x0254, 0x80);
+        } else {
+            GWR(0x0294, t0); GWR(0x02D5, t1); GWR(0x0316, t2);
+            GWR(0x05E8, GRD(0x05E8) + 1);
+        }
+    }
+    GWR(0x0316, GRD(0x0316) - 1);
+    g_cpu.X = 0x04; call_jsr(0x01BC7B);
+    if (GRD(0x0150) >= 0x08) {
+        if (GRD(0x0213) == 0) { cpu_set_p(p0); return; }
+        if (GRD(0x0317) == 0) {
+            uint8_t x = (uint8_t)(GRD(0x05E9) * 3);
+            GWR(0x0295, ROM1(0xC2F4 + x));
+            GWR(0x02D6, ROM1(0xC2F5 + x));
+            GWR(0x0317, ROM1(0xC2F6 + x));
+            GWR(0x05E9, GRD(0x05E9) + 1);
+        }
+        GWR(0x0317, GRD(0x0317) - 1);
+        g_cpu.X = 0x05; call_jsr(0x01BC7B);
+    }
+    if (GRD(0x0014) != 0) {
+        uint8_t a = GRD(0x0150);
+        if (a < 0xE4 && a >= 0x08) { GWR(0x0214, 0x20); GWR(0x0255, 0x80); }
+        g_cpu.X = 0x06; call_jsr(0x01BC7B);
+        if (GRD(0x0014) != 1) {
+            for (int k = 1; k <= 3; k++) {
+                a = GRD(0x0150 + k);
+                if (a < 0xE4 && a >= 0x08) { GWR(0x0214 + k, 0x20); GWR(0x0255 + k, 0x80); }
+                g_cpu.X = (uint16_t)(0x06 + k); call_jsr(0x01BC7B);
+            }
+        }
+    }
+    uint8_t m = GRD(0x05E9);
+    if (m == 2) { GWR(0x004C, 0x02); GWR(0x008D, 0); }
+    else if (m == 4) {
+        GWR(0x0212, 0x60); GWR(0x0253, 0xC0);
+        GWR(0x0316, 0); GWR(0x05E8, 0x09);
+    }
+    for (int x = 9; x >= 5; x--)
+        if (GRD(0x014B + x) < 0x08) { GWR(0x020E + x, 0); GWR(0x0290 + x, 0); }
+    g_cpu.X = 0x04;
+    cpu_set_p(p0);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+}
+
+/* BD87 with the script pointer on the stack, as the ROM pushes it. */
+static void anim_with(uint8_t x, uint16_t script) {
+    uint16_t s = g_cpu.S;
+    push8(0x01); push8((uint8_t)(script >> 8)); push8((uint8_t)script);
+    g_cpu.X = (uint16_t)((g_cpu.X & 0xFF00) | x);
+    call_jsr(0x01BD87);
+    g_cpu.S = s;
+}
+
+/* $01:C30F: draw the tally's actors: 0..3 and 5 with their scripts at
+ * $01:C39A / $01:C3A2, 4 as a gnat ($01:A933), 6..9 (one per level done)
+ * with $01:C3AC.. $01:C3BE. */
+static void mp_01C30F(void) {
+    uint8_t p0 = cpu_get_p();
+    op_sep(0x30);
+    for (int x = 3; x >= 0; x--) {
+        uint16_t s = g_cpu.S;
+        push8(0x01); push8(0xC3); push8(0x9A);
+        g_cpu.X = (uint16_t)x;
+        call_jsr(0x01BD87);
+        g_cpu.S = s;
+    }
+    anim_with(0x04, 0xA933);
+    anim_with(0x05, 0xC3A2);
+    if (GRD(0x0014) != 0) {
+        anim_with(0x06, 0xC3AC);
+        if (GRD(0x0014) != 1) {
+            anim_with(0x07, 0xC3B2);
+            anim_with(0x08, 0xC3B8);
+            anim_with(0x09, 0xC3BE);
+        }
+    }
+    cpu_set_p(p0);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+}
+
+/* $01:B4F4: phase 9, the level's end: music ($1F after the third level,
+ * else $0F) and sound $3A, the tally screen ($CD93, $BFA8, $C133), then
+ * $200 frames of its actors (they move from the $80th on: $C18D, with the
+ * sounds $3B every 8th frame while actor 4 is at y $90 and $3C when it
+ * reaches x $82). Then the next level ($0014; after three, the next
+ * round $0012), the play screen rebuilt and faded in, phase 0. The frame
+ * count stays on the stack (pushed twice per frame), as in the ROM. */
+void mp_01B4F4(void) {
+    CPU_SET_A16(R16(0x0014) == 0x0002 ? 0x001F : 0x000F);
+    call_jsl(0x01D308);
+    CPU_SET_A16(0x003A);
+    call_jsl(0x01D368);
+    mp_01CD93();
+    call_jsl(0x01E2CE);
+    mp_01BFA8();
+    mp_01C133();
+    W16(0x0010, R16(0x0150));
+    uint16_t x = 0x0200;
+    do {
+        push16(x);
+        push16(x);
+        call_jsl(0x01E06F);
+        bus_wram_write16(0x0446, 0x0040);
+        x = pull16();
+        if (x < 0x0180) {
+            mp_01C18D();
+            op_sep(0x20);
+            if (GRD(0x01D2) == 0x90) {
+                if ((bus_wram_read8(0x016C) & 0x07) == 0) { CPU_SET_A8(0x3B); call_jsl(0x01D368); }
+                GWR(0x0010, GRD(0x0150));
+            } else if (GRD(0x0150) == 0x82) {
+                CPU_SET_A8(0x3C); call_jsl(0x01D368);
+            }
+            op_rep(0x20);
+        }
+        mp_01C30F();
+        call_jsl(0x01E2CE);
+        x = (uint16_t)(pull16() - 1);
+        g_cpu.X = x;
+    } while (x != 0 && !g_quit);
+    W16(0x0014, R16(0x0014) + 1);
+    W16(0x0016, 0);
+    if (R16(0x0014) == 0x0003) { W16(0x0012, R16(0x0012) + 1); W16(0x0014, 0); }
+    CPU_SET_A16(0x0000);
+    call_jsl(0x01D308);
+    call_jsl(0x01E7C9);
+    CPU_SET_A16(0x00AE);
+    call_jsl(0x01E042);
+    call_jsr(0x01A30D);
+    call_jsr(0x01A2B7);
+    call_jsr(0x01A373);
+    call_jsr(0x01A44D);
+    call_jsl(0x01DE97);
+    call_jsl(0x01DECD);
+    call_jsl(0x01E06F);
+    bus_wram_write16(0x0446, 0x0040);
+    call_jsl(0x01E2CE);
+    call_jsl(0x01E2CE);
+    call_jsl(0x01E2CE);
+    call_jsl(0x01E794);
+    W16(0x0024, 0);
+    W16(0x05EA, 0);
+    W16(0x0026, 0);
+}
+
 void mp_register_gnat(void) {
+    func_table_register(0x01B4F4, mp_01B4F4);
+    func_table_register(0x01CD93, mp_01CD93);
+    func_table_register(0x01BFA8, mp_01BFA8);
+    func_table_register(0x01C133, mp_01C133);
+    func_table_register(0x01C18D, mp_01C18D);
+    func_table_register(0x01C30F, mp_01C30F);
     func_table_register(0x01B3FA, mp_01B3FA);
     func_table_register(0x01B481, mp_01B481);
     func_table_register(0x01B0CA, mp_01B0CA);

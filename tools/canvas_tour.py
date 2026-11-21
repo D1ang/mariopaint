@@ -183,7 +183,9 @@ SCENARIOS = {
         # swats around where the boss hangs (lives kept up); the hit count
         # set near the end so it is beaten and its last steps run
         pt for i in range(42) for pt in ((("poke", "7F0018=05"),) + ((("poke", "7F00C9=13"),) if i == 24 else ()) +
-                                         ((80 + (i * 29) % 100, 58 + (i % 4) * 8), ("wait", 25)))] + [("wait", 100)],
+                                         ((80 + (i * 29) % 100, 58 + (i % 4) * 8), ("wait", 25)))] + [("wait", 100)] +
+        # the level's tally ($B4F4, $200 frames) and the next level's start
+        [("wait", 200)] * 4,
     "gnatbossinner": None,
     "gnatbossinner2": None,
     # The title clicks again, checked with the title states alone (their

@@ -90,7 +90,7 @@ JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
 
 # Gnat Attack's boss: the phase handlers ($A5F3 enters them through $01:E393)
 # and the boss's steps ($B5F4/$B60F jump to them through tables).
-BOSS_PHASES = ["01B0CA", "01B153", "01B17B", "01B27D", "01B3FA", "01B481"]
+BOSS_PHASES = ["01B0CA", "01B153", "01B17B", "01B27D", "01B3FA", "01B481", "01B4F4"]
 BOSS_STEPS = ["01B62A", "01B62E", "01B66F", "01B6A1", "01B6AA", "01B70F", "01B784", "01B7A9", "01B7C7",
               "01B7E3", "01B841", "01B8A8", "01B8C8"]
 JUMP_ENTERED += BOSS_PHASES + BOSS_STEPS
