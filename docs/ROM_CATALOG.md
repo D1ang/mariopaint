@@ -1,19 +1,19 @@
 # ROM catalogue
 
 What the tours read from the ROM (tools/rom_catalog.py over the
-SNESRECOMP_ROMLOG logs of 92 scenario runs on the genuine ROM).
+SNESRECOMP_ROMLOG logs of 108 scenario runs on the genuine ROM).
 Addresses and sizes only; the full region list is in
 scratch/romlog/catalog.json.
 
 | kind | bytes | share |
 |---|---:|---:|
 | apu | 228182 | 21.8% |
-| data | 154754 | 14.8% |
-| vram | 118528 | 11.3% |
-| code | 40979 | 3.9% |
+| data | 156027 | 14.9% |
+| vram | 119552 | 11.4% |
+| code | 42321 | 4.0% |
 | cgram | 1024 | 0.1% |
 | native | 300 | 0.0% |
-| (not reached by the tours) | 504809 | 48.1% |
+| (not reached by the tours) | 501170 | 47.8% |
 
 ## Asset regions (DMA targets and CPU-read data)
 
@@ -48,6 +48,7 @@ scratch/romlog/catalog.json.
 | 00B1A2 | 0031A2 | 16 | data | 00B0D3 |
 | 00B600 | 003600 | 16 | data | 00B5CB |
 | 00B947 | 003947 | 65 | data | 00B926 |
+| 00B9F5 | 0039F5 | 42 | data | 00B98C |
 | 00C8E2 | 0048E2 | 22 | data | 00C873 |
 | 00CEC0 | 004EC0 | 144 | data | 00CE22 |
 | 00D559 | 005559 | 23 | data | 00D52C |
@@ -61,6 +62,7 @@ scratch/romlog/catalog.json.
 | 0187E1 | 0087E1 | 17 | data | 018641 |
 | 018C6F | 008C6F | 72 | data | 018C43 |
 | 018D85 | 008D85 | 20 | data | 018D35 |
+| 0195F4 | 0095F4 | 56 | data | 019372 |
 | 019E24 | 009E24 | 16 | data | 019DFE |
 | 019E3C | 009E3C | 80 | data | 019DFE |
 | 01A5FA | 00A5FA | 20 | data | 01E393 |
@@ -160,6 +162,7 @@ scratch/romlog/catalog.json.
 | 03E000 | 01E000 | 1920 | data | 00A25B |
 | 03E800 | 01E800 | 384 | data | 00A25B |
 | 03EA00 | 01EA00 | 384 | data | 00A25B |
+| 03FC00 | 01FC00 | 1024 | vram | 7000 |
 | 04A000 | 022000 | 22528 | vram | 6000 |
 | 04FA00 | 027A00 | 3584 | vram | 7D00 |
 | 05B000 | 02B000 | 2048 | vram | 7000 |
@@ -209,13 +212,14 @@ scratch/romlog/catalog.json.
 | 0DB53D | 06B53D | 111 | data | 01F91E |
 | 0DB5D3 | 06B5D3 | 22 | data | 01F91E |
 | 0DB653 | 06B653 | 127 | data | 01F91E |
+| 0DB6D2 | 06B6D2 | 1128 | data | 01F9BB |
 | 0DCC56 | 06CC56 | 104 | data | 01F91E |
 | 0DCCCF | 06CCCF | 19 | data | 01F91E |
 | 0DCCF3 | 06CCF3 | 19 | data | 01F91E |
 | 0DCD17 | 06CD17 | 279 | data | 01F91E |
 | 0DCE3A | 06CE3A | 104 | data | 01F91E |
 | 0DCF8C | 06CF8C | 668 | data | 01F91E |
-| 0DD28A | 06D28A | 17 | data | 01F91E |
+| 0DD283 | 06D283 | 24 | data | 01F91E |
 | 0DD3F9 | 06D3F9 | 32 | data | 01F91E |
 | 0DD4F1 | 06D4F1 | 375 | data | 01F91E |
 | 0DD6A8 | 06D6A8 | 187 | data | 01F91E |

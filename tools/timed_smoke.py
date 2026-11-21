@@ -44,7 +44,7 @@ def run(rom, name):
         canvas_tour.run(rom, canvas_tour.SCENARIOS[name], out, real=False, extra_env=env)
     finally:
         canvas_tour.subprocess.run = real_run
-    want = len([p for p in canvas_tour.SCENARIOS[name] if p not in ("notitle", "sram") and p[0] != "poke"]) + 1
+    want = len([p for p in canvas_tour.SCENARIOS[name] if p not in ("notitle", "sram") and p[0] not in ("poke", "pad2")]) + 1
     shots = sorted(f for f in os.listdir(out) if f.endswith(".png"))
     # A blank screen where the ROM's run shows a picture: the native code
     # broke the display (black music editor, for instance).

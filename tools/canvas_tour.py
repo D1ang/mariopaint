@@ -61,6 +61,10 @@ SCENARIOS = {
     # title states of $01:8308); a while to watch each, then Mario.
     "title": ["notitle"] + [pt for x in (62, 86, 107, 118, 130, 144, 163, 174, 190, 203)
                             for pt in ((x, 72), ("wait", 240))] + [(128, 168)],
+    # The special start: B+Select+A held on controller 2 at the title
+    # ($01:8CBF sets $0565 = 1), with a saved game: the saved animation
+    # plays as an attract loop ($01:9372).
+    "specialstart": ["sram", "notitle", ("pad2", "A080", 120), ("wait", 290)] + [("wait", 300)] * 5,
     # The title left alone: after $800 idle frames the demo ($0F:C00E)
     # plays ($0F:C000 feeds its recorded mouse input). The run ends while
     # it plays: its end jumps to the soft reset ($0082B8), which the
@@ -250,11 +254,14 @@ def run(rom, points, out, real=False, extra_env=None, title=True):
     if points and points[0] == "notitle":        # a scenario on the title screen itself
         points, title = points[1:], False
     script, shots = (list(TITLE) if title else []), []
-    pokes = []
+    pokes, pad2 = [], []
     f = CANVAS_AT if title else 300
     for pt in points:
         if pt[0] == "poke":                      # ("poke", "BBAAAA=VV"): set a byte now, no shot
             pokes.append(f"{f}:{pt[1]}")
+            continue
+        if pt[0] == "pad2":                      # ("pad2", "MASK", frames): hold controller 2's
+            pad2.append(f"{f}:{pt[1]}:{pt[2]}")  # buttons ($4218 bits, hex) from now, no shot
             continue
         if pt[0] == "wait":                      # ("wait", frames): hands off, then a shot
             script.append(f"{f}:@128:@112:0:{pt[1]}")
@@ -289,6 +296,8 @@ def run(rom, points, out, real=False, extra_env=None, title=True):
                SNESRECOMP_DUMP_PREFIX="s")
     if pokes:
         env["SNESRECOMP_POKE"] = " ".join(pokes)
+    if pad2:
+        env["SNESRECOMP_PAD2_SCRIPT"] = " ".join(pad2)
     if sram:
         env["SNESRECOMP_SRAM_LOAD"] = os.path.abspath(sram)
     if real:
@@ -300,7 +309,7 @@ def run(rom, points, out, real=False, extra_env=None, title=True):
         f.write(r.stdout + r.stderr)
     pngs = sorted(glob.glob(os.path.join(out, "screenshot_*.png")))
     snaps = sorted(glob.glob(os.path.join(out, "s_f*.snap")))
-    points = [p for p in points if p not in ("notitle", "sram") and p[0] != "poke"]
+    points = [p for p in points if p not in ("notitle", "sram") and p[0] not in ("poke", "pad2")]
     names = ["00_canvas"] + [
         (f"{i + 1:02d}_wait_{p[1]}" if p[0] == "wait" else
          f"{i + 1:02d}_drag_{p[1]}_{p[2]}_{p[3]}_{p[4]}" if p[0] == "drag" else

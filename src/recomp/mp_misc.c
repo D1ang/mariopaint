@@ -2856,7 +2856,100 @@ static void mp_009F87(void) {
     CPU_SET_A16(bus_wram_read16(0x19BC));
 }
 
+/* ---- Reached by the special start's attract loop ($01:9372). ---- */
+
+/* $00:B98C: restore parts of the screen from the copy at $7F:A000: $8B03,
+ * then the list for the stamp set $19C2 (its pointer at $00:B9EF): per
+ * entry rows, width in bytes, source and target offsets (words; ends at
+ * 0); each row copied word by word within bank $7F, the source one tile
+ * row ($400) on. Its three counters live on the stack in the ROM. */
+static void mp_00B98C(void) {
+    call_jsr(0x008B03);
+    uint8_t db = g_cpu.DB;
+    uint16_t ptr = bus_read16(db, (uint16_t)(0xB9EF + (uint16_t)(bus_read16(db, 0x19C2) << 1)));
+    uint16_t y = 0, x = g_cpu.X;
+    for (;;) {
+        uint16_t rows = bus_read16(db, (uint16_t)(ptr + y));
+        if (rows == 0) break;
+        uint16_t width = bus_read16(db, (uint16_t)(ptr + y + 2));
+        x = bus_read16(db, (uint16_t)(ptr + y + 4));
+        uint16_t t = bus_read16(db, (uint16_t)(ptr + y + 6));
+        do {
+            uint16_t n = width;
+            do {
+                bus_write16(0x7F, t, bus_read16(0x7F, (uint16_t)(0xA000 + x)));
+                x += 2; t += 2; n -= 2;
+            } while (n != 0);
+            x = (uint16_t)(x + 0x0400 - width);
+        } while (--rows != 0);
+        y = (uint16_t)(y + 8);
+    }
+    g_cpu.X = x; g_cpu.Y = y;
+    CPU_SET_A16(ptr);
+}
+
+/* $00:B988: JSL entry of $B98C. */
+static void mp_00B988(void) { mp_00B98C(); }
+
+/* $00:C7AF: the music's tempo $0EAE from $0C24 ((n - $10) / 2 * 3 / 2),
+ * sound and music state 0 ($D328, $D348), the player's counters cleared. */
+static void mp_00C7AF(void) {
+    uint16_t h = (uint16_t)((bus_wram_read16(0x0C24) - 0x0010) >> 1);
+    bus_wram_write16(0x0EAE, (uint16_t)((h >> 1) + h));
+    CPU_SET_A16(0x0000); call_jsl(0x01D328);
+    CPU_SET_A16(0x0000); call_jsl(0x01D348);
+    bus_wram_write16(0x0C2E, 0); bus_wram_write16(0x0C30, 0);
+    bus_wram_write16(0x0E92, 0); bus_wram_write16(0x0E90, 0);
+}
+
+/* $00:C7DB: one step of the saved song in the attract loop. When the
+ * step flag $0E92 is set: at the end of the song ($0E90 = $0EAE) either
+ * stop (no repeat, $0C26 = 0: $C865) or start over; then the three
+ * channels' notes at $09E4 + $0E90 (negative: rest) go to $D328, $D348
+ * and $D368 as (note + $100) / 16 | note, low byte; $0E90 moves on by 3
+ * words. Then the beat counter $0C30:$0C2E += $0C2C:$0C2A, its carry the
+ * next step flag. */
+static void mp_00C7DB(void) {
+    if (bus_wram_read16(0x0E92) != 0) {
+        uint16_t x = bus_wram_read16(0x0E90);
+        if (x == bus_wram_read16(0x0EAE)) {
+            if (bus_wram_read16(0x0C26) == 0) {                     /* $C865 */
+                bus_wram_write16(0x0EAC, 0);
+                uint16_t sp = g_cpu.S;
+                uint16_t aa = bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xAA));
+                bus_wram_write16((uint16_t)(sp - 1), aa);
+                bus_wram_write16((uint16_t)(sp - 3), 0x0000);
+                g_cpu.S = (uint16_t)(sp - 4);
+                CPU_SET_A16(0x0000);
+                call_jsr(0x009FC4);
+                return;
+            }
+            bus_wram_write16(0x0E90, 0);
+            x = 0;
+        }
+        static const uint32_t ch[3] = { 0x01D328, 0x01D348, 0x01D368 };
+        for (int k = 0; k < 3; k++, x += 2) {
+            uint16_t v = bus_wram_read16((uint16_t)(0x09E4 + x));
+            if (v & 0x8000) continue;
+            CPU_SET_A16((uint16_t)((((uint16_t)(v + 0x0100) >> 4) | v) & 0x00FF));
+            call_jsl(ch[k]);
+        }
+        g_cpu.X = x;
+        bus_wram_write16(0x0E90, x);
+    }
+    uint32_t lo = (uint32_t)bus_wram_read16(0x0C2A) + bus_wram_read16(0x0C2E);
+    bus_wram_write16(0x0C2E, (uint16_t)lo);
+    uint32_t hi = (uint32_t)bus_wram_read16(0x0C2C) + bus_wram_read16(0x0C30) + (lo >> 16);
+    bus_wram_write16(0x0C30, (uint16_t)hi);
+    bus_wram_write16(0x0E92, (uint16_t)(hi >> 16));
+    CPU_SET_A16((uint16_t)hi);
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00C7DB, mp_00C7DB);
+    func_table_register(0x00B98C, mp_00B98C);
+    func_table_register(0x00B988, mp_00B988);
+    func_table_register(0x00C7AF, mp_00C7AF);
     func_table_register(0x00B610, mp_00B610);
     func_table_register(0x00B637, mp_00B637);
     func_table_register(0x0FC118, mp_0FC118);
