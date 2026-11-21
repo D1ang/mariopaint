@@ -103,7 +103,9 @@ static const char k_verified[] =
     /* called once at boot or reset, or through the tool table */
     "0082D5,0094E5,018328,"
     /* the canvas click and tool dispatchers, now without skipped calls */
-    "008BEBF,009564F";
+    "008BEBF,009564F,"
+    /* small helpers the tour runs on the ROM (fill2, demo, copy, modes) */
+    "00B610,00B637,0FC118,009F87,00E2A3";
 
 /* Routines that present a frame: $01:E2CE waits for the NMI; $01:E794 and
  * $01:E7C9 fade the screen in/out over several frames. */

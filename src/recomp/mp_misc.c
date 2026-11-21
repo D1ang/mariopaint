@@ -2738,7 +2738,132 @@ void mp_00EF6E(void) {
 #undef MB_W
 #undef MB_DP
 
+/* ---- Small helpers the tour runs on the ROM (their callers' C versions
+ * do the same work inline). ---- */
+
+static uint16_t st16(uint8_t o) { return bus_wram_read16((uint16_t)(g_cpu.S + o)); }
+static void st16w(uint8_t o, uint16_t v) { bus_wram_write16((uint16_t)(g_cpu.S + o), v); }
+
+/* $00:B610: queue a fill span (the fill's queue at $7F:6000, write index
+ * DP $7E, read index DP $7C): the pixel x/row word at 5,S and the tile
+ * offset at 3,S (pushed by the caller). Full: the entry is written but the
+ * index stays. */
+static void mp_00B610(void) {
+    uint16_t dp = g_cpu.DP;
+    uint16_t t = bus_read16(0x00, (uint16_t)(dp + 0x7E));
+    g_cpu.X = t;
+    bus_write16(0x7F, (uint16_t)(0x6000 + t), st16(5));
+    bus_write16(0x7F, (uint16_t)(0x6002 + t), st16(3));
+    uint16_t h = (uint16_t)((bus_read16(0x00, (uint16_t)(dp + 0x7C)) - 4) & 0x1FFF);
+    if (h == t) { CPU_SET_A16(h); return; }
+    t = (uint16_t)((t + 4) & 0x1FFF);
+    bus_write16(0x00, (uint16_t)(dp + 0x7E), t);
+    CPU_SET_A16(t);
+}
+
+/* $00:B637: the fill's next span. A button pressed during the fill
+ * ($1A0C bit 5): leave the whole fill (S back to the one saved in DP $B0
+ * by $B3FF, $1B1C cleared, PLP, RTS). Queue empty: carry set. Else the
+ * entry into 5,S / 3,S, the read index on, carry clear. */
+static void mp_00B637(void) {
+    uint16_t dp = g_cpu.DP;
+    if (bus_wram_read16(0x1A0C) & 0x0020) {
+        g_cpu.X = bus_read16(0x00, (uint16_t)(dp + 0xB0));
+        g_cpu.S = g_cpu.X;
+        op_sep(0x20);
+        bus_wram_write8(0x1B1C, 0x00);
+        g_cpu.S = (uint16_t)(g_cpu.S + 1);
+        cpu_set_p(bus_wram_read8(g_cpu.S));
+        return;
+    }
+    uint16_t h = bus_read16(0x00, (uint16_t)(dp + 0x7C));
+    CPU_SET_A16(h);
+    if (h == bus_read16(0x00, (uint16_t)(dp + 0x7E))) { g_cpu.flag_C = true; return; }
+    g_cpu.X = h;
+    st16w(5, bus_read16(0x7F, (uint16_t)(0x6000 + h)));
+    st16w(3, bus_read16(0x7F, (uint16_t)(0x6002 + h)));
+    h = (uint16_t)((h + 4) & 0x1FFF);
+    bus_write16(0x00, (uint16_t)(dp + 0x7C), h);
+    CPU_SET_A16(h);
+    g_cpu.flag_C = false;
+}
+
+/* $0F:C118: the demo's next entry ($04E6, 15 bits); at the wrap the other
+ * bank pair ($04E8 ^ 3). */
+static void mp_0FC118(void) {
+    uint16_t i = (uint16_t)((bus_wram_read16(0x04E6) + 1) & 0x7FFF);
+    if (i == 0) bus_wram_write16(0x04E8, (uint16_t)(bus_wram_read16(0x04E8) ^ 0x0003));
+    bus_wram_write16(0x04E6, i);
+    CPU_SET_A16(i);
+}
+
+/* $01:DB25: strobe the joypad latch ($4016 = 1), read $4016,X, release. */
+static void mp_01DB25(void) {
+    bus_write8(0x00, 0x4016, 0x01);
+    CPU_SET_A8(bus_read8(0x00, (uint16_t)(0x4016 + g_cpu.X)));
+    bus_write8(0x00, 0x4016, 0x00);
+}
+
+/* $00:E2A3: copy the 64 words at $101C to $109C. */
+static void mp_00E2A3(void) {
+    for (int x = 0x7E; x >= 0; x -= 2)
+        bus_wram_write16((uint16_t)(0x109C + x), bus_wram_read16((uint16_t)(0x101C + x)));
+    g_cpu.X = 0xFFFE;
+}
+
+/* $00:DA49: one button of a check chain: the cursor in the box x $04-$23,
+ * y $88-$9B: $E2A3, sound $0F, $1AF5 = $FFFF, $09D6 = $16, and back to the
+ * caller's caller (PLA, RTS). x at $24 or more: on to the next button
+ * ($DA7B, which follows). */
+static void mp_00DA49(void) {
+    uint16_t x = bus_wram_read16(0x04DC);
+    CPU_SET_A16(x);
+    if (x < 0x0004) return;
+    if (x >= 0x0024) { tail_jmp(0x00DA7B); return; }
+    uint16_t y = bus_wram_read16(0x04DE);
+    CPU_SET_A16(y);
+    if (y < 0x0088 || y >= 0x009C) return;
+    mp_00E2A3();
+    CPU_SET_A16(0x000F);
+    call_jsl(0x01D368);
+    bus_wram_write16(0x1AF5, 0xFFFF);
+    bus_wram_write16(0x09D6, 0x0016);
+    CPU_SET_A16(st16(1));
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+}
+
+/* $00:9F87: clamp the rectangle on the stack (x at 9,S and 7,S, y at 5,S
+ * and 3,S) to the canvas $19B6..$19B8 / $19BA..$19BC, by the sign of the
+ * difference as the ROM's CMP/BMI/BPL do. */
+static void mp_009F87(void) {
+    static const uint8_t xs[2] = { 9, 7 }, ys[2] = { 5, 3 };
+    for (int k = 0; k < 2; k++) {
+        uint16_t lo = bus_wram_read16(0x19B6);
+        if (!((uint16_t)(lo - st16(xs[k])) & 0x8000)) st16w(xs[k], lo);
+    }
+    for (int k = 0; k < 2; k++) {
+        uint16_t hi = bus_wram_read16(0x19B8);
+        if ((uint16_t)(hi - st16(xs[k])) & 0x8000) st16w(xs[k], hi);
+    }
+    for (int k = 0; k < 2; k++) {
+        uint16_t lo = bus_wram_read16(0x19BA);
+        if (!((uint16_t)(lo - st16(ys[k])) & 0x8000)) st16w(ys[k], lo);
+    }
+    for (int k = 0; k < 2; k++) {
+        uint16_t hi = bus_wram_read16(0x19BC);
+        if ((uint16_t)(hi - st16(ys[k])) & 0x8000) st16w(ys[k], hi);
+    }
+    CPU_SET_A16(bus_wram_read16(0x19BC));
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00B610, mp_00B610);
+    func_table_register(0x00B637, mp_00B637);
+    func_table_register(0x0FC118, mp_0FC118);
+    func_table_register(0x01DB25, mp_01DB25);
+    func_table_register(0x00E2A3, mp_00E2A3);
+    func_table_register(0x00DA49, mp_00DA49);
+    func_table_register(0x009F87, mp_009F87);
     func_table_register(0x00EF6E, mp_00EF6E);
 
 
