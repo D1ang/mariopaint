@@ -2945,7 +2945,92 @@ static void mp_00C7DB(void) {
     CPU_SET_A16((uint16_t)hi);
 }
 
+/* $00:BBD8: one frame of the attract loop's animation playback. The
+ * frame counter sprite and its blinking marker ($F91E), then the next
+ * frame of the saved animation from the stream at $7E:3800 ($19EA
+ * position; flag bytes $19EE/$19F6 say which entries carry a hold count
+ * $19F2 and a sign for x), drawn at its position by $01:F9BB; the frame
+ * advance through the speed accumulator $1A00 += $1A02 (a carry, or speed
+ * 0, steps $19FE, wrapping at the set's length $00:BE37); the saved song's
+ * step ($C7DB) while it plays ($0EAC). A click goes on in the ROM ($BCDB:
+ * the attract loop's buttons), with the PHP still on the stack. */
+static void mp_00BBD8(void) {
+    uint8_t db = g_cpu.DB;
+    uint8_t p0 = cpu_get_p();
+    uint16_t sp = g_cpu.S;
+    bus_wram_write8(sp, p0);                                     /* PHP */
+    g_cpu.S = (uint16_t)(sp - 1);
+#define R16(o)   bus_read16(db, (uint16_t)(o))
+#define W16(o,v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+    op_rep(0x20);
+    uint16_t set2 = (uint16_t)(R16(0x19C2) << 1);
+    uint8_t y8 = (uint8_t)set2;
+    bus_write8(db, 0x0105, R16(0x19FE) >= R16(0xBE31 + y8) ? 0x0A : 0x02);
+    op_rep(0x10);
+    g_cpu.X = 0x0028; g_cpu.Y = 0x0007;
+    CPU_SET_A16((uint16_t)(R16(0x1A08) + 0x0096));
+    call_jsl(0x01F91E);
+    uint16_t blink = R16(0x1A0A);
+    W16(0x1A0A, blink + 1);
+    if (!(blink & 0x0008)) {
+        uint16_t f = R16(0x1A08);
+        g_cpu.X = (uint16_t)((uint16_t)(f << 4) - f + 0x0038);
+        g_cpu.Y = 0x0007;
+        CPU_SET_A16(0x00A3);
+        call_jsl(0x01F91E);
+    }
+    uint16_t base = (uint16_t)(R16(0xBE3D + set2) + R16(0x19FE));
+    uint16_t x = R16(0x19EA);
+    if (R16(0x19F2) != 0) {
+        W16(0x19F2, R16(0x19F2) - 1);
+    } else {
+        x += 2;
+        if (x == R16(0x19EC)) { W16(0x19EE, 0); x = 0; }
+        W16(0x19F6, R16(0x19F6) >> 1);
+        W16(0x19EE, R16(0x19EE) >> 1);
+        if (!(R16(0x19EE) & 0x0100)) {
+            W16(0x19EE, (uint16_t)(bus_read8(0x7E, (uint16_t)(0x3800 + x)) | 0xFF00));
+            x++;
+            W16(0x19F6, bus_read16(0x7E, (uint16_t)(0x3800 + x)));
+            x++;
+        }
+        if (R16(0x19EE) & 0x0001) {
+            W16(0x19F2, bus_read8(0x7E, (uint16_t)(0x3800 + x)));
+            x++;
+        }
+        W16(0x19EA, x);
+    }
+    uint16_t sign = (R16(0x19F6) & 0x0001) ? 0xFF00 : 0x0000;
+    g_cpu.Y = bus_read8(0x7E, (uint16_t)(0x3800 + x));
+    g_cpu.X = (uint16_t)(bus_read8(0x7E, (uint16_t)(0x3801 + x)) | sign);
+    CPU_SET_A16(base);
+    call_jsl(0x01F9BB);
+    bool step = true;
+    uint16_t spd = R16(0x1A02);
+    if (spd != 0) {
+        uint32_t t = (uint32_t)spd + R16(0x1A00);
+        W16(0x1A00, (uint16_t)t);
+        step = (t >> 16) != 0;
+    }
+    if (step) {
+        W16(0x19FE, R16(0x19FE) + 1);
+        if (R16(0x19FE) == R16(0xBE37 + set2)) W16(0x19FE, 0);
+    }
+    if (R16(0x0EAC) != 0) call_jsr(0x00C7DB);
+    if (R16(0x04CA) & 0x0020) {
+        /* $BCDB: the buttons, in the ROM (S keeps the PHP). */
+        recomp_set_redirect(0x00BCDB);
+        return;
+    }
+    g_cpu.S = sp;                                                /* PLP */
+    cpu_set_p(p0);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+#undef R16
+#undef W16
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00BBD8, mp_00BBD8);
     func_table_register(0x00C7DB, mp_00C7DB);
     func_table_register(0x00B98C, mp_00B98C);
     func_table_register(0x00B988, mp_00B988);

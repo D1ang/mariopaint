@@ -65,6 +65,11 @@ SCENARIOS = {
     # ($01:8CBF sets $0565 = 1), with a saved game: the saved animation
     # plays as an attract loop ($01:9372).
     "specialstart": ["sram", "notitle", ("pad2", "A080", 120), ("wait", 290)] + [("wait", 300)] * 5,
+    # The attract loop's bottom buttons: the song on and off (x $40-$4E).
+    # $BBD8 hands a click to the ROM ($BCDB), so this one is checked with
+    # $BBD8 left out (conformance.py INNER).
+    "specialclick": ["sram", "notitle", ("pad2", "A080", 120), ("wait", 290), (70, 210), ("wait", 300),
+                     (70, 210), ("wait", 300), ("wait", 300)],
     # The title left alone: after $800 idle frames the demo ($0F:C00E)
     # plays ($0F:C000 feeds its recorded mouse input). The run ends while
     # it plays: its end jumps to the soft reset ($0082B8), which the

@@ -1,7 +1,7 @@
 # ROM catalogue
 
 What the tours read from the ROM (tools/rom_catalog.py over the
-SNESRECOMP_ROMLOG logs of 108 scenario runs on the genuine ROM).
+SNESRECOMP_ROMLOG logs of 110 scenario runs on the genuine ROM).
 Addresses and sizes only; the full region list is in
 scratch/romlog/catalog.json.
 

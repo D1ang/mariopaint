@@ -124,6 +124,7 @@ INNER = {"gnatinner": GNAT_LOOP, "gnatinner2": GNAT_LOOP, "gnatinner3": GNAT_LOO
          "shapesinner2": {"009C25"},
          "modesinner": {"00D869"},
          "copyinner": {"01D3BA"},
+         "specialclick": {"00BBD8"},
          "gnatbossinner": GNAT_LOOP - set(BOSS_PHASES),
          "gnatbossinner2": GNAT_LOOP | {"01B5F4", "01B60F"},
          # the rocket ($A9BE) with the clicks that lead to it
