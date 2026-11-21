@@ -225,6 +225,54 @@ void mp_0098F8(void) {
     tail_jmp(0x00A363);
 }
 
+/* $00:9CC7: the shape tools' part of $9C25 (it jumps here for $AE 1-3):
+ * the corners and the canvas saved at the press, restored while dragging,
+ * the shape's sound at the release, then line, rectangle or ellipse. */
+void mp_009CC7(void) {
+    uint8_t db = g_cpu.DB;
+#define R16(o)   bus_read16(db, (uint16_t)(o))
+#define W16(o,v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+#define DR(o)    bus_read16(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define DW(o,v)  bus_write16(0x00, (uint16_t)(g_cpu.DP + (o)), (uint16_t)(v))
+    DW(0x50, 0x0001);                                        /* $9CC7: shapes */
+    if (DR(0x20) == 0) {
+        call_jsr(0x008B03);
+        DW(0xBA, 0x0001); DW(0xBE, 0x0001);
+        DW(0x22, R16(0x04DC)); DW(0x26, R16(0x04DC));
+        DW(0x24, R16(0x04DE)); DW(0x28, R16(0x04DE));
+    } else {
+        DW(0x26, R16(0x04DC)); DW(0x28, R16(0x04DE));
+    }
+    uint16_t y = (R16(0x04CA) & 0x0010) ? 1 : 0;
+    g_cpu.Y = y;
+    DW(0x20, y);
+    if (y == 0) {
+        call_jsr(0x008B18);
+    } else {
+        uint16_t m = R16(0x1B26);
+        if (m & 0x0001) return;
+        if (m & 0x0008) call_jsr(0x008B18);
+    }
+    if (DR(0x20) == 0) {                                     /* released: its sound */
+        uint16_t v = DR(0xB8) ? 0x0003 : R16(0x198A);
+        uint16_t ae = DR(0xAE);
+        if (ae == 0x0003) ae--;
+        ae--;
+        CPU_SET_A16((uint16_t)((ae << 2) + v + 0x001D));
+        call_jsl(0x01D368);
+        W16(0x053B, 0x0004); W16(0x053D, 0); W16(0x053F, 0x0003);
+    }
+    uint16_t ae = DR(0xAE);
+    call_jsr(ae == 0x0002 ? 0x00AB26 : ae == 0x0003 ? 0x00AB8A : 0x00AAFB);
+    if (DR(0x20) == 0) { CPU_SET_A16(0x0010); call_jsl(0x009C1B); }
+    CPU_SET_A16(0x0001); call_jsl(0x01D348);
+    CPU_SET_A16(0x0018); call_jsl(0x01D368);
+#undef R16
+#undef W16
+#undef DR
+#undef DW
+}
+
 /* $00:9C25: the drawing tools on the canvas (tool <= 4, 7, 8), by $AE:
  *   0, freehand ($09D4 clear): a dab at the cursor ($AAEF), the stroke
  *      joined by $9D7D, the scratch sound while it runs, sound $18 on
@@ -275,39 +323,7 @@ void mp_009C25(void) {
         tail_jmp(0x00AAFB);
         return;
     }
-    DW(0x50, 0x0001);                                        /* $9CC7: shapes */
-    if (DR(0x20) == 0) {
-        call_jsr(0x008B03);
-        DW(0xBA, 0x0001); DW(0xBE, 0x0001);
-        DW(0x22, R16(0x04DC)); DW(0x26, R16(0x04DC));
-        DW(0x24, R16(0x04DE)); DW(0x28, R16(0x04DE));
-    } else {
-        DW(0x26, R16(0x04DC)); DW(0x28, R16(0x04DE));
-    }
-    uint16_t y = (R16(0x04CA) & 0x0010) ? 1 : 0;
-    g_cpu.Y = y;
-    DW(0x20, y);
-    if (y == 0) {
-        call_jsr(0x008B18);
-    } else {
-        uint16_t m = R16(0x1B26);
-        if (m & 0x0001) return;
-        if (m & 0x0008) call_jsr(0x008B18);
-    }
-    if (DR(0x20) == 0) {                                     /* released: its sound */
-        uint16_t v = DR(0xB8) ? 0x0003 : R16(0x198A);
-        uint16_t ae = DR(0xAE);
-        if (ae == 0x0003) ae--;
-        ae--;
-        CPU_SET_A16((uint16_t)((ae << 2) + v + 0x001D));
-        call_jsl(0x01D368);
-        W16(0x053B, 0x0004); W16(0x053D, 0); W16(0x053F, 0x0003);
-    }
-    uint16_t ae = DR(0xAE);
-    call_jsr(ae == 0x0002 ? 0x00AB26 : ae == 0x0003 ? 0x00AB8A : 0x00AAFB);
-    if (DR(0x20) == 0) { CPU_SET_A16(0x0010); call_jsl(0x009C1B); }
-    CPU_SET_A16(0x0001); call_jsl(0x01D348);
-    CPU_SET_A16(0x0018); call_jsl(0x01D368);
+    mp_009CC7();                                             /* JMP $9CC7: shapes */
 #undef R16
 #undef W16
 #undef DR
@@ -1030,6 +1046,7 @@ void mp_register_tools(void) {
     func_table_register(0x0098C3, mp_0098C3);
     func_table_register(0x0098F8, mp_0098F8);
     func_table_register(0x009C25, mp_009C25);
+    func_table_register(0x009CC7, mp_009CC7);
     func_table_register(0x009DAB, mp_009DAB);
     func_table_register(0x009DFB, mp_009DFB);
     func_table_register(0x00A363, mp_00A363);

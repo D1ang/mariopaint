@@ -202,7 +202,7 @@ void mp_01833F(void);  /* Title state 1: animate */
 
 /* Miscellaneous (mp_misc.c) */
 void mp_register_misc(void);
-void mp_009CC7(void);  /* Undo-draw mode */
+void mp_009CC7(void);  /* the shape tools' part of $9C25 */
 void mp_009E76(void);  /* Stamp placement logic */
 void mp_009760(void);  /* Right-click / undo handler */
 void mp_00E0D4(void);  /* Palette color compute */

@@ -97,7 +97,9 @@ static const char k_verified[] =
     "01B0CA,01B153,01B17B,01B27D,01B3FA,01B481,01B62A,01B62E,01B66F,01B6A1,01B6AA,01B70F,"
     "01B784,01B7A9,01B7C7,01B7E3,01B841,01B8A8,01B8C8,01B9FB,01BB3C,0FC00EL,"
     /* the level's end after the boss */
-    "01B4F4F,01BFA8F,01C133,01C18D,01C30F,01CD93";
+    "01B4F4F,01BFA8F,01C133,01C18D,01C30F,01CD93,"
+    /* checked with their callers off (drawinner, modesinner, shapesinner*) */
+    "00AAEF,00DE46F,00E2CC,009CC7F,00B32D";
 
 /* Routines that present a frame: $01:E2CE waits for the NMI; $01:E794 and
  * $01:E7C9 fade the screen in/out over several frames. */

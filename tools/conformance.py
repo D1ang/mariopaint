@@ -94,6 +94,10 @@ BOSS_PHASES = ["01B0CA", "01B153", "01B17B", "01B27D", "01B3FA", "01B481", "01B4
 BOSS_STEPS = ["01B62A", "01B62E", "01B66F", "01B6A1", "01B6AA", "01B70F", "01B784", "01B7A9", "01B7C7",
               "01B7E3", "01B841", "01B8A8", "01B8C8"]
 JUMP_ENTERED += BOSS_PHASES + BOSS_STEPS
+# Entered by JMP/JML from their callers: the dab at the cursor ($9C25's
+# freehand), the masked single-pixel draw ($B051), the window tables
+# ($01:D3BA).
+JUMP_ENTERED += ["00AAEF", "00B32D", "00E64B", "009CC7"]
 
 # Scenarios checked without the routines listed (see check_scenario).
 GNAT_LOOP = {"01A505", "01A5F3", "01A60E", "01C012", "01AF14", "01AFDB", "01C3C4",
@@ -109,6 +113,13 @@ INNER = {"gnatinner": GNAT_LOOP, "gnatinner2": GNAT_LOOP, "gnatinner3": GNAT_LOO
          # the other scenarios. ($0F:C000's playback itself matched the ROM
          # on all 4070 calls of a run with only it under check.)
          "demo": {"0FC000", "008A75"},
+         # the routines entered from these, checked with them off
+         "drawinner": {"009C25"},
+         "drawinner2": {"00B051"},
+         "shapesinner": {"00B051"},
+         "shapesinner2": {"009C25"},
+         "modesinner": {"00D869"},
+         "copyinner": {"01D3BA"},
          "gnatbossinner": GNAT_LOOP - set(BOSS_PHASES),
          "gnatbossinner2": GNAT_LOOP | {"01B5F4", "01B60F"},
          # the rocket ($A9BE) with the clicks that lead to it

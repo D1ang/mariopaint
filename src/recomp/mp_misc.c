@@ -21,72 +21,6 @@
 
 extern bool g_quit;
 
-/* ========================================================================
- * $00:9CC7 — Undo-draw mode (draw with undo preview)
- *
- * Alternate drawing mode that saves canvas before drawing and
- * restores on release (for preview/undo behavior).
- * Used by rectangle, ellipse, and line tools.
- * ======================================================================== */
-void mp_009CC7(void) {
-    bus_wram_write16(0x0050, 0x0001);
-    uint8_t draw = bus_wram_read8(0x0020);
-
-    if (draw == 0) {
-        /* First click — save canvas to undo buffer */
-        mp_008B03();
-        bus_wram_write16(0x00BA, 0x0001);
-        bus_wram_write16(0x00BE, 0x0001);
-
-        bus_wram_write16(0x0022, bus_wram_read16(0x04DC));
-        bus_wram_write16(0x0026, bus_wram_read16(0x04DC));
-        bus_wram_write16(0x0024, bus_wram_read16(0x04DE));
-        bus_wram_write16(0x0028, bus_wram_read16(0x04DE));
-    } else {
-        /* Continuing — update endpoint */
-        bus_wram_write16(0x0026, bus_wram_read16(0x04DC));
-        bus_wram_write16(0x0028, bus_wram_read16(0x04DE));
-    }
-
-    /* Check button state */
-    uint16_t buttons = bus_wram_read16(0x04CA);
-    uint8_t new_draw = (buttons & 0x0010) ? 1 : 0;
-    bus_wram_write8(0x0020, new_draw);
-
-    if (new_draw == 0) {
-        /* Released — restore canvas (undo preview) */
-        mp_008B18();
-    }
-
-    if (new_draw != 0) {
-        /* Still drawing — check for movement */
-        uint16_t movement = bus_wram_read16(0x1B26);
-        if (!(movement & 0x0001)) {
-            /* No new movement */
-            return;
-        }
-    }
-
-    /* Determine shape type from $AE and draw */
-    uint16_t shape = bus_wram_read16(0x00AE);
-    if (shape == 0x0002) {
-        func_table_call(0x00AB26);  /* Rectangle */
-    } else if (shape == 0x0003) {
-        func_table_call(0x00AB8A);  /* Ellipse */
-    } else {
-        func_table_call(0x00AAFB);  /* Line */
-    }
-
-    if (draw == 0) {
-        /* End of preview — commit with sound */
-        func_table_call(0x009C1B);
-    }
-
-    op_lda_imm16(0x0001);
-    func_table_call(0x01D348);
-    op_lda_imm16(0x0018);
-    func_table_call(0x01D368);
-}
 
 /* ========================================================================
  * $00:9E76 — Stamp placement logic
@@ -3020,7 +2954,6 @@ void mp_register_misc(void) {
     func_table_register(0x01EDCA, mp_01EDCA);
     func_table_register(0x01EFB9, mp_01EFB9);
 
-    func_table_register(0x009CC7, mp_009CC7);
     func_table_register(0x009E76, mp_009E76);
     func_table_register(0x009760, mp_009760);
     func_table_register(0x00E233, mp_00E233);

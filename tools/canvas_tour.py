@@ -187,6 +187,12 @@ SCENARIOS = {
         # the level's tally ($B4F4, $200 frames) and the next level's start
         [("wait", 200)] * 4,
     "gnatbossinner": None,
+    "drawinner": None,
+    "drawinner2": None,
+    "shapesinner": None,
+    "shapesinner2": None,
+    "modesinner": None,
+    "copyinner": None,
     "gnatbossinner2": None,
     # The title clicks again, checked with the title states alone (their
     # dispatcher $01:8308 not under check).
@@ -204,6 +210,12 @@ SCENARIOS["gnatinner2"] = SCENARIOS["gnat"]
 SCENARIOS["gnatinner3"] = SCENARIOS["gnatpause"]
 SCENARIOS["gnatinner4"] = SCENARIOS["gnatpause"]
 SCENARIOS["gnatbossinner"] = SCENARIOS["gnatboss"]
+SCENARIOS["drawinner"] = SCENARIOS["draw"]
+SCENARIOS["drawinner2"] = SCENARIOS["draw"]
+SCENARIOS["shapesinner"] = SCENARIOS["shapes"]
+SCENARIOS["shapesinner2"] = SCENARIOS["shapes"]
+SCENARIOS["modesinner"] = SCENARIOS["modes"]
+SCENARIOS["copyinner"] = SCENARIOS["copy"]
 SCENARIOS["gnatbossinner2"] = SCENARIOS["gnatboss"]
 
 SRAM_FIXTURE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "scratch", "sram", "saved.srm")
