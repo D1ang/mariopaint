@@ -3267,7 +3267,155 @@ static void mp_00F8CC(void) {
     bus_wram_write16(0x04DE, bus_wram_read16(0x0E9A));
 }
 
+/* ---- The music editor's song position bar ($09E0, 0..$B5F). ---- */
+
+/* $F331: the song position moved by A, kept within 0..$B5F (by the sign of
+ * the sum, as the ROM's BPL/BMI). */
+static void song_pos_by(uint16_t a) {
+    a = (uint16_t)(a + bus_wram_read16(0x09E0));
+    if (a & 0x8000) a = 0;
+    if (!((uint16_t)(a - 0x0B5F) & 0x8000)) a = 0x0B5F;
+    bus_wram_write16(0x09E0, a);
+    CPU_SET_A16(a);
+}
+
+/* $00:F289: the song position bar (y $A0-$A7): its arrows (x $B8-$BE and
+ * $F1-$F7) move the song 8 times by 4, redrawn ($ED76) and faded
+ * ($0446 = 4, $01:E09B) a frame each but the last; on the bar a click left
+ * or right of the thumb ((pos / 64) + $BF, 5 wide) pages by $E0, on the
+ * thumb the drag starts ($0E94 / $0E98). The step and count stay on the
+ * stack across the frames, as in the ROM. */
+static void mp_00F289(void) {
+    call_jsl(0x01E2F3);
+    bus_wram_write16(0x0E96, 0);
+    if (!(bus_wram_read16(0x04CA) & 0x0010)) return;
+    uint16_t x = bus_wram_read16(0x04DC);
+    if (x < 0x00B8) return;
+    if (x < 0x00BF || (x >= 0x00F1 && x < 0x00F8)) {
+        uint16_t step = x >= 0x00C0 ? 0x0004 : 0xFFFC;
+        for (uint16_t y = 8; y != 0 && !g_quit; ) {
+            uint16_t sp = g_cpu.S;
+            bus_wram_write16((uint16_t)(sp - 1), step);
+            bus_wram_write16((uint16_t)(sp - 3), y);
+            g_cpu.S = (uint16_t)(sp - 4);
+            song_pos_by(step);
+            if (y != 1) {
+                bus_wram_write16(0x0446, 0x0004);
+                call_jsr(0x00ED76);
+                call_jsl(0x01E09B);
+                call_jsl(0x01E2CE);
+            }
+            g_cpu.S = sp;
+            y = (uint16_t)(bus_wram_read16((uint16_t)(sp - 3)) - 1);
+            step = bus_wram_read16((uint16_t)(sp - 1));
+            g_cpu.Y = y;
+        }
+        bus_wram_write16(0x0446, 0x0004);
+        CPU_SET_A16(0x0004);
+        return;
+    }
+    if (x >= 0x00F8) return;
+    if (!(bus_wram_read16(0x04CA) & 0x0040)) return;
+    uint16_t t = (uint16_t)((bus_wram_read16(0x09E0) >> 6) + 0x00BF);
+    if (t >= x) { song_pos_by(0xFF20); return; }
+    if ((uint16_t)(t + 5) < x) { song_pos_by(0x00E0); return; }
+    bus_wram_write16(0x0E94, x);
+    bus_wram_write16(0x0E98, bus_wram_read16(0x04DE));
+}
+
+/* $00:F346: dragging the song position bar's thumb: the cursor's move
+ * since the last frame ($0E94) times 64 added to the position; past either
+ * end the cursor is pulled back by the overshoot / 64; the cursor's x kept
+ * as the drag's origin and its y held at $0E98. */
+static void mp_00F346(void) {
+    uint16_t cx = bus_wram_read16(0x04DC);
+    uint16_t a = (uint16_t)(-(uint16_t)((uint16_t)(bus_wram_read16(0x0E94) - cx) << 6));
+    a = (uint16_t)(a + bus_wram_read16(0x09E0));
+    if (a & 0x8000) {
+        a = (uint16_t)((uint16_t)(-a) >> 6);
+        bus_wram_write16(0x04DC, (uint16_t)(a + bus_wram_read16(0x04DC)));
+        a = 0;
+    }
+    if (!((uint16_t)(a - 0x0B5F) & 0x8000)) {
+        a = (uint16_t)(-(uint16_t)((uint16_t)(a - 0x0B5F) >> 6));
+        bus_wram_write16(0x04DC, (uint16_t)(a + bus_wram_read16(0x04DC)));
+        a = 0x0B5F;
+    }
+    bus_wram_write16(0x09E0, a);
+    bus_wram_write16(0x0E94, bus_wram_read16(0x04DC));
+    bus_wram_write16(0x04DE, bus_wram_read16(0x0E98));
+}
+
+/* $00:EC88: state $1E, the music editor. $01:E30E; when the PPU flags a
+ * sprite overflow ($213E bits 6-7) the sprite priority rotates ($0561,
+ * $2102 from $00:ED6E); the cursor shape ($04D0: $0D, or the note $0E8C
+ * over the staff when no bar is dragged). Without the button the drags
+ * end; with it, by place: a bar's drag ($F346 / $F8CC), the top row
+ * ($F054), the bottom bar ($8E0B, then $95E7 with its slot and tool in DP
+ * $A4/$AC), the staff ($F0A4), the song position bar ($F289), and in the
+ * row y $A8-$BB the buttons ($F3DE, $F7D4, the scroll bar $F827, $FAB5).
+ * Then the view ($ED76) and $01:E2F3. */
+static void mp_00EC88(void) {
+    call_jsl(0x01E30E);
+    op_sep(0x20);
+    uint8_t st = bus_read8(0x00, 0x213E);
+    if (st & 0xC0) {
+        uint8_t n = (uint8_t)(bus_wram_read8(0x0561) + 1);
+        bus_wram_write8(0x0561, n);
+        g_cpu.X = (uint16_t)(n & 0x07);
+        bus_write8(0x00, 0x2103, 0x80);
+        bus_write8(0x00, 0x2102, bus_read8(g_cpu.DB, (uint16_t)(0xED6E + (n & 0x07))));
+    }
+    op_rep(0x20);
+    bus_wram_write16(0x04D0, 0x000D);
+    if ((bus_wram_read16(0x0E94) | bus_wram_read16(0x0E96)) == 0 && bus_wram_read16(0x04DE) < 0x0098)
+        bus_wram_write16(0x04D0, bus_wram_read16(0x0E8C));
+    bool end_drags = false;
+    if (!(bus_wram_read16(0x04CA) & 0x0011)) {
+        end_drags = true;
+    } else if (bus_wram_read16(0x0E94)) {
+        call_jsr(0x00F346);
+    } else if (bus_wram_read16(0x0E96)) {
+        call_jsr(0x00F8CC);
+    } else {
+        uint16_t y = bus_wram_read16(0x04DE);
+        if (y < 0x0018) call_jsr(0x00F054);
+        else if (y >= 0x00C8) {
+            call_jsr(0x008E0B);
+            bus_write16(0x00, (uint16_t)(g_cpu.DP + 0xA4), g_cpu.X);
+            bus_write16(0x00, (uint16_t)(g_cpu.DP + 0xAC), CPU_A16());
+            uint16_t sp = g_cpu.S;
+            call_jsr(0x0095E7);
+            /* Leaving the editor, $95E7 does not come back: it switched
+             * the stack to go on elsewhere. Return on that stack. */
+            if (g_cpu.S != sp) return;
+            end_drags = true;
+        } else if (y < 0x002C) {
+        } else if (y < 0x0098) call_jsr(0x00F0A4);
+        else if (y < 0x00A0) {
+        } else if (y < 0x00A8) call_jsr(0x00F289);
+        else if (y < 0x00BC) {
+            uint16_t x = bus_wram_read16(0x04DC);
+            if (x < 0x0030) {
+            } else if (x < 0x0048) call_jsr(0x00F3DE);
+            else if (x < 0x0050) {
+            } else if (x < 0x0068) call_jsr(0x00F7D4);
+            else if (x < 0x00A8) call_jsr(0x00F827);
+            else if (x >= 0x00C8 && x < 0x00E8) call_jsr(0x00FAB5);
+        }
+    }
+    if (end_drags) {
+        bus_wram_write16(0x0E94, 0);
+        bus_wram_write16(0x0E96, 0);
+    }
+    call_jsr(0x00ED76);
+    call_jsl(0x01E2F3);
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00EC88, mp_00EC88);
+    func_table_register(0x00F289, mp_00F289);
+    func_table_register(0x00F346, mp_00F346);
     func_table_register(0x00F827, mp_00F827);
     func_table_register(0x00F8CC, mp_00F8CC);
     func_table_register(0x00CF9B, mp_00CF9B);

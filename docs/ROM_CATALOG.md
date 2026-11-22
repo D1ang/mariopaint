@@ -8,12 +8,12 @@ scratch/romlog/catalog.json.
 | kind | bytes | share |
 |---|---:|---:|
 | apu | 228182 | 21.8% |
-| data | 156027 | 14.9% |
+| data | 156117 | 14.9% |
 | vram | 119552 | 11.4% |
-| code | 42564 | 4.1% |
+| code | 42856 | 4.1% |
 | cgram | 1024 | 0.1% |
 | native | 300 | 0.0% |
-| (not reached by the tours) | 500927 | 47.8% |
+| (not reached by the tours) | 500545 | 47.7% |
 
 ## Asset regions (DMA targets and CPU-read data)
 
@@ -207,6 +207,7 @@ scratch/romlog/catalog.json.
 | 0DB242 | 06B242 | 56 | data | 01F91E |
 | 0DB2BA | 06B2BA | 30 | data | 01F91E |
 | 0DB2DA | 06B2DA | 50 | data | 01F91E |
+| 0DB358 | 06B358 | 28 | data | 01F91E |
 | 0DB3C8 | 06B3C8 | 48 | data | 01F91E |
 | 0DB438 | 06B438 | 118 | data | 01F91E |
 | 0DB53D | 06B53D | 111 | data | 01F91E |
@@ -232,7 +233,7 @@ scratch/romlog/catalog.json.
 | 0DDBF9 | 06DBF9 | 17 | data | 01FA68 |
 | 0DDC1B | 06DC1B | 1481 | data | 01F91E |
 | 0DE1EB | 06E1EB | 285 | data | 01F91E |
-| 0DE42B | 06E42B | 28 | data | 01F91E |
+| 0DE42B | 06E42B | 98 | data | 01F91E |
 | 0DE50B | 06E50B | 236 | data | 01F91E |
 | 0DE64F | 06E64F | 164 | data | 01FA68 |
 | 0DE79B | 06E79B | 46 | data | 01F91E |
