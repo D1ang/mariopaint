@@ -102,6 +102,9 @@ JUMP_ENTERED += ["00AAEF", "00B32D", "00E64B", "009CC7"]
 # at the soft reset ($82D5), or through the tool table ($94E5, the empty
 # slot): checked wherever a scenario reaches them.
 JUMP_ENTERED += ["0084D5", "018328", "0082D5", "0094E5"]
+# Main states, entered through JMP ($87B0,X) by $09D6 ($87A8), and the
+# sound test's row handler (JMP ($C941,X)).
+JUMP_ENTERED += ["00C900", "00D505", "00D03E", "00D2F6", "00C94B"]
 
 # Scenarios checked without the routines listed (see check_scenario).
 GNAT_LOOP = {"01A505", "01A5F3", "01A60E", "01C012", "01AF14", "01AFDB", "01C3C4",

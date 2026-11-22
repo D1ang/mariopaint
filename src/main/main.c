@@ -107,7 +107,9 @@ static const char k_verified[] =
     /* small helpers the tour runs on the ROM (fill2, demo, copy, modes) */
     "00B610,00B637,0FC118,009F87,00E2A3,"
     /* the special start's attract loop (specialstart) */
-    "00B988L,00B98C,00C7AFL,00C7DBF,00BBD8";
+    "00B988L,00B98C,00C7AFL,00C7DBF,00BBD8,"
+    /* main states (table $87B0): the sound test, two waits, state $0B */
+    "00C900,00C94B,00D03EF,00D2F6F,00D505F";
 
 /* Routines that present a frame: $01:E2CE waits for the NMI; $01:E794 and
  * $01:E7C9 fade the screen in/out over several frames. */

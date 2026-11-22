@@ -3029,7 +3029,105 @@ static void mp_00BBD8(void) {
 #undef W16
 }
 
+/* ---- Main states ($09D6, table $87B0). ---- */
+
+/* $00:D505: state $0B: $D824, then $01:EB81. */
+static void mp_00D505(void) {
+    call_jsr(0x00D824);
+    call_jsl(0x01EB81);
+}
+
+/* $00:D03E / $00:D2F6: states $07 and $09: $D824, and once the counter
+ * ($1A76 / $1A7E, low byte) reaches 8, four colour words from $00:CF40 /
+ * $00:CF48 into $7E:208A, uploaded ($01:DE97), a frame, and the next
+ * state ($08 / $0A). */
+static void state_wait8(uint16_t counter, uint16_t colours, uint16_t next) {
+    call_jsr(0x00D824);
+    uint16_t a = (uint16_t)(bus_wram_read16(counter) & 0x00FF);
+    CPU_SET_A16(a);
+    if (a != 0x0008) return;
+    for (int x = 6; x >= 0; x -= 2)
+        bus_write16(0x7E, (uint16_t)(0x208A + x), bus_read16(0x00, (uint16_t)(colours + x)));
+    g_cpu.X = 0xFFFE;
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    bus_wram_write16(0x09D6, next);
+    CPU_SET_A16(next);
+}
+static void mp_00D03E(void) { state_wait8(0x1A76, 0xCF40, 0x0008); }
+static void mp_00D2F6(void) { state_wait8(0x1A7E, 0xCF48, 0x000A); }
+
+/* $00:C94B: the sound-test row picked (state $01, the row in $1B1A):
+ * only for a click between x $40 and $BF and a row other than the current
+ * one ($04C4): its sound ($17 for row 0, else $44 + row), the old row's
+ * three marks restored (the first from $0D:EB27, then $06FF, $05FF), the
+ * new row's three marks off ($FFFF), at $1A15 + 8 * (row + 1/4/7). */
+static void mp_00C94B(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t x = bus_wram_read16(0x04DC);
+    if (x < 0x0040 || x >= 0x00C0) return;
+    uint16_t row = bus_read16(db, 0x1B1A), cur = bus_read16(db, 0x04C4);
+    if (row == cur) return;
+    CPU_SET_A16(row == 0 ? 0x0017 : (uint16_t)(row + 0x0044));
+    call_jsl(0x01D368);
+    cur = bus_read16(db, 0x04C4);
+    uint16_t o = (uint16_t)((cur + 1) << 3);
+    bus_write16(db, (uint16_t)(0x1A15 + o), bus_read16(0x0D, (uint16_t)(0xEB27 + o)));
+    bus_write16(db, (uint16_t)(0x1A15 + (uint16_t)((cur + 4) << 3)), 0x06FF);
+    bus_write16(db, (uint16_t)(0x1A15 + (uint16_t)((cur + 7) << 3)), 0x05FF);
+    row = bus_read16(db, 0x1B1A);
+    bus_write16(db, 0x04C4, row);
+    for (int k = 1; k <= 7; k += 3) {
+        o = (uint16_t)((row + k) << 3);
+        bus_write16(db, (uint16_t)(0x1A15 + o), 0xFFFF);
+    }
+    g_cpu.X = o;
+    CPU_SET_A16(0xFFFF);
+}
+
+/* $00:C93C: JMP ($C941,X) by A (0..4): $C94B for 1-3, $CA76 for 0 and 4. */
+static void mp_00C93C(void) {
+    uint16_t x = (uint16_t)(CPU_A16() << 1);
+    g_cpu.X = x;
+    uint16_t t = bus_read16(0x00, (uint16_t)(0xC941 + x));
+    if (t == 0xC94B) { mp_00C94B(); return; }
+    tail_jmp((uint32_t)t);
+}
+
+/* $00:C900: state $01, the sound test: a click below y $30 picks a row
+ * ((y - $30) / 32, at most 4, and 4 only from y $C8): $1B1A = row - 1 and
+ * $C93C with the row; then the ten objects 9..0 drawn ($01:F84F). */
+static void mp_00C900(void) {
+    if (bus_wram_read16(0x04CA) & 0x0020) {
+        uint16_t y = bus_wram_read16(0x04DE);
+        if (y >= 0x0030) {
+            uint16_t row = (uint16_t)((y - 0x0030) >> 5);
+            bool go = true;
+            if (row >= 0x0004) {
+                if (y < 0x00C8) go = false;
+                else row = 0x0004;
+            }
+            if (go) {
+                bus_write16(g_cpu.DB, 0x1B1A, (uint16_t)(row - 1));
+                CPU_SET_A16(row);
+                call_jsr(0x00C93C);
+            }
+        }
+    }
+    for (int16_t n = 9; n >= 0; n--) {
+        CPU_SET_A16((uint16_t)n);
+        call_jsl(0x01F84F);
+    }
+    CPU_SET_A16(0xFFFF);
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00C900, mp_00C900);
+    func_table_register(0x00C93C, mp_00C93C);
+    func_table_register(0x00C94B, mp_00C94B);
+    func_table_register(0x00D505, mp_00D505);
+    func_table_register(0x00D03E, mp_00D03E);
+    func_table_register(0x00D2F6, mp_00D2F6);
     func_table_register(0x00BBD8, mp_00BBD8);
     func_table_register(0x00C7DB, mp_00C7DB);
     func_table_register(0x00B98C, mp_00B98C);
