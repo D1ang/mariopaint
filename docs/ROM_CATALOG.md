@@ -1,7 +1,7 @@
 # ROM catalogue
 
 What the tours read from the ROM (tools/rom_catalog.py over the
-SNESRECOMP_ROMLOG logs of 110 scenario runs on the genuine ROM).
+SNESRECOMP_ROMLOG logs of 112 scenario runs on the genuine ROM).
 Addresses and sizes only; the full region list is in
 scratch/romlog/catalog.json.
 
@@ -10,10 +10,10 @@ scratch/romlog/catalog.json.
 | apu | 228182 | 21.8% |
 | data | 156027 | 14.9% |
 | vram | 119552 | 11.4% |
-| code | 42321 | 4.0% |
+| code | 42412 | 4.0% |
 | cgram | 1024 | 0.1% |
 | native | 300 | 0.0% |
-| (not reached by the tours) | 501170 | 47.8% |
+| (not reached by the tours) | 501079 | 47.8% |
 
 ## Asset regions (DMA targets and CPU-read data)
 
@@ -50,7 +50,7 @@ scratch/romlog/catalog.json.
 | 00B947 | 003947 | 65 | data | 00B926 |
 | 00B9F5 | 0039F5 | 42 | data | 00B98C |
 | 00C8E2 | 0048E2 | 22 | data | 00C873 |
-| 00CEC0 | 004EC0 | 144 | data | 00CE22 |
+| 00CEC0 | 004EC0 | 128 | data | 00CE22 |
 | 00D559 | 005559 | 23 | data | 00D52C |
 | 00D57A | 00557A | 22 | data | 00D52C |
 | 00DE7B | 005E7B | 19 | data | 00DE46 |

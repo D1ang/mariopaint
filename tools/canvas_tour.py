@@ -70,6 +70,9 @@ SCENARIOS = {
     # $BBD8 left out (conformance.py INNER).
     "specialclick": ["sram", "notitle", ("pad2", "A080", 120), ("wait", 290), (70, 210), ("wait", 300),
                      (70, 210), ("wait", 300), ("wait", 300)],
+    # The save/load menu opened and left by its exit button ($CF9B ->
+    # $CF50: the canvas back, the previous state).
+    "menuexit": [MODE_BAR, (129, 212), ("wait", 120), (12, 210), ("wait", 300), (100, 100), ("wait", 100)],
     # The title left alone: after $800 idle frames the demo ($0F:C00E)
     # plays ($0F:C000 feeds its recorded mouse input). The run ends while
     # it plays: its end jumps to the soft reset ($0082B8), which the

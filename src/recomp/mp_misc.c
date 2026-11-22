@@ -3121,7 +3121,88 @@ static void mp_00C900(void) {
     CPU_SET_A16(0xFFFF);
 }
 
+/* $00:CF50: leave the save/load menu (its exit button): sound $41, the
+ * screen faded ($0446 = 4, $01:E09B), the canvas back ($01:CDE1 with
+ * $CE4B, the colour $1976, $A451, $A525, $89C3, $C414), uploaded and a
+ * frame; then the tool $07 ($9FC4 with DP $AA = 7 and 0 on the stack) and
+ * the state from before ($09D8). */
+static void mp_00CF50(void) {
+    CPU_SET_A16(0x0041);
+    call_jsl(0x01D368);
+    bus_wram_write16(0x0446, 0x0004);
+    call_jsl(0x01E09B);
+    CPU_SET_A16(0xCE4B);
+    call_jsl(0x01CDE1);
+    bus_wram_write16(0x04D0, bus_wram_read16(0x1976));
+    call_jsr(0x00A451);
+    call_jsr(0x00A525);
+    call_jsr(0x0089C3);
+    call_jsr(0x00C414);
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    bus_write16(0x00, (uint16_t)(g_cpu.DP + 0xAA), 0x0007);
+    uint16_t sp = g_cpu.S;
+    bus_wram_write16((uint16_t)(sp - 1), 0x0007);
+    bus_wram_write16((uint16_t)(sp - 3), 0x0000);
+    g_cpu.S = (uint16_t)(sp - 4);
+    CPU_SET_A16(0x0000);
+    call_jsr(0x009FC4);
+    uint16_t st = bus_wram_read16(0x09D8);
+    bus_wram_write16(0x09D6, st);
+    CPU_SET_A16(st);
+}
+
+/* $00:CF9B: state $06, the save/load menu: a click on its boxes (x $48 to
+ * $AF; y $48-$67 the first: state $07, sound $0D; with a saved game
+ * ($1982), y $70-$8F the second: state $09, sound $0E; y $98-$B7 the
+ * third: state $0B, $0563 = $40, sound $0E), or on the exit button
+ * (y from $C8, x $08-$16: $CF50); then $D824. */
+void mp_00CF9B(void) {
+    if (bus_wram_read16(0x04CA) & 0x0020) {
+        uint16_t x = bus_wram_read16(0x04DC), y = bus_wram_read16(0x04DE);
+        bool box = false;
+        if (x >= 0x0048 && x < 0x00B0 && y >= 0x0048) {
+            if (y < 0x0068) {
+                bus_wram_write16(0x1A65, 0xFFFF);
+                bus_wram_write16(0x1A75, 0xFFFF);
+                bus_wram_write16(0x09D6, 0x0007);
+                CPU_SET_A16(0x000D);
+                call_jsl(0x01D368);
+                box = true;
+            } else {
+                bool third = false;
+                if (bus_wram_read16(0x1982) == 0) third = true;
+                else if (y >= 0x0070) {
+                    if (y < 0x0090) {
+                        bus_wram_write16(0x1A6D, 0xFFFF);
+                        bus_wram_write16(0x1A7D, 0xFFFF);
+                        bus_wram_write16(0x09D6, 0x0009);
+                        CPU_SET_A16(0x000E);
+                        call_jsl(0x01D368);
+                        box = true;
+                    } else third = true;
+                }
+                if (third && !box && y >= 0x0098 && y < 0x00B8) {
+                    bus_wram_write16(0x1A95, 0xFFFF);
+                    bus_wram_write16(0x0563, 0x0040);
+                    bus_wram_write16(0x09D6, 0x000B);
+                    CPU_SET_A16(0x000E);
+                    call_jsl(0x01D368);
+                    box = true;
+                }
+            }
+        }
+        if (!box && y >= 0x00C8 && x >= 0x0008 && x < 0x0017) {
+            mp_00CF50();
+            return;
+        }
+    }
+    call_jsr(0x00D824);
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00CF9B, mp_00CF9B);
+    func_table_register(0x00CF50, mp_00CF50);
     func_table_register(0x00C900, mp_00C900);
     func_table_register(0x00C93C, mp_00C93C);
     func_table_register(0x00C94B, mp_00C94B);
