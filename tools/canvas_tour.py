@@ -70,6 +70,11 @@ SCENARIOS = {
     # $BBD8 left out (conformance.py INNER).
     "specialclick": ["sram", "notitle", ("pad2", "A080", 120), ("wait", 290), (70, 210), ("wait", 300),
                      (70, 210), ("wait", 300), ("wait", 300)],
+    # The music editor's scroll bar (y $A8-$BB, x $68-$A7): the arrows,
+    # a page on either side of the thumb, the thumb dragged ($F827/$F8CC).
+    "musicscroll": [MODE_BAR, (102, 212), (128, 112), ("wait", 60), ("drag", 115, 178, 140, 178), ("wait", 60),
+                    ("drag", 121, 178, 96, 178), ("wait", 60), (164, 178), ("wait", 30), (164, 178),
+                    ("wait", 30), (106, 178), ("wait", 30), (150, 178), ("wait", 30), (120, 178), ("wait", 30)],
     # The save/load menu opened and left by its exit button ($CF9B ->
     # $CF50: the canvas back, the previous state).
     "menuexit": [MODE_BAR, (129, 212), ("wait", 120), (12, 210), ("wait", 300), (100, 100), ("wait", 100)],

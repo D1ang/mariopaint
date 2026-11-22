@@ -3200,7 +3200,76 @@ void mp_00CF9B(void) {
     call_jsr(0x00D824);
 }
 
+/* ---- The music editor's scroll bar ($0C28, 0..$9F). ---- */
+
+/* $F8B5: the scroll position moved by A, kept within 0..$9F (by the sign
+ * of the sum, as the ROM's BPL/BMI), then the view redrawn ($F921). */
+static void music_scroll_by(uint16_t a) {
+    a = (uint16_t)(a + bus_wram_read16(0x0C28));
+    if (a & 0x8000) a = 0;
+    if (!((uint16_t)(a - 0x009F) & 0x8000)) a = 0x009F;
+    bus_wram_write16(0x0C28, a);
+    CPU_SET_A16(a);                       /* $F921 takes the position in A */
+    call_jsr(0x00F921);
+}
+
+/* $00:F827: a click on the scroll bar (x $68-$A7): its arrows (x below
+ * $70 or from $A0) step by one ($FCF4, $FEB1, $FF5F first); on the bar,
+ * left or right of the thumb ((pos / 4) + $71, 5 wide) a page of $10,
+ * on the thumb the drag starts ($0E96 / $0E9A = the cursor). Only with
+ * the click bit ($04CA bit 6); elsewhere the drag ends ($0E96 = 0). */
+static void mp_00F827(void) {
+    bus_wram_write16(0x0E94, 0);
+    uint16_t x = bus_wram_read16(0x04DC);
+    bool arrows = (x >= 0x0068 && x < 0x0070) || (x >= 0x00A0 && x < 0x00A8);
+    bool bar = x >= 0x0070 && x < 0x00A0;
+    if ((!arrows && !bar) || !(bus_wram_read16(0x04CA) & 0x0040)) {
+        bus_wram_write16(0x0E96, 0);
+        return;
+    }
+    call_jsr(0x00FCF4);
+    call_jsr(0x00FEB1);
+    call_jsr(0x00FF5F);
+    x = bus_wram_read16(0x04DC);
+    if (arrows) { music_scroll_by(x < 0x0070 ? 0xFFFF : 0x0001); return; }
+    uint16_t t = (uint16_t)((bus_wram_read16(0x0C28) >> 2) + 0x0071);
+    if (t >= x) { bus_wram_write16(0x0E96, 0); music_scroll_by(0xFFF0); return; }
+    if ((uint16_t)(t + 5) < x) { bus_wram_write16(0x0E96, 0); music_scroll_by(0x0010); return; }
+    bus_wram_write16(0x0E96, x);
+    bus_wram_write16(0x0E9A, bus_wram_read16(0x04DE));
+}
+
+/* $00:F8CC: dragging the scroll bar's thumb: the cursor's move since the
+ * last frame ($0E96) times 4 added to the position; past either end the
+ * cursor is pulled back by the overshoot / 4; then the view ($F921), the
+ * cursor's x kept as the drag's origin and its y held at $0E9A. */
+static void mp_00F8CC(void) {
+    uint16_t cx = bus_wram_read16(0x04DC);
+    uint16_t a = (uint16_t)(-(uint16_t)((uint16_t)(bus_wram_read16(0x0E96) - cx) << 2));
+    bus_wram_write16(0x0E96, cx);
+    a = (uint16_t)(a + bus_wram_read16(0x0C28));
+    if (a & 0x8000) {
+        a = (uint16_t)(-a);
+        a >>= 2;
+        bus_wram_write16(0x04DC, (uint16_t)(a + bus_wram_read16(0x04DC)));
+        a = 0;
+    }
+    if (!((uint16_t)(a - 0x009F) & 0x8000)) {
+        a = (uint16_t)((uint16_t)(a - 0x009F) >> 2);
+        a = (uint16_t)(-a);
+        bus_wram_write16(0x04DC, (uint16_t)(a + bus_wram_read16(0x04DC)));
+        a = 0x009F;
+    }
+    bus_wram_write16(0x0C28, a);
+    CPU_SET_A16(a);
+    call_jsr(0x00F921);
+    bus_wram_write16(0x0E96, bus_wram_read16(0x04DC));
+    bus_wram_write16(0x04DE, bus_wram_read16(0x0E9A));
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00F827, mp_00F827);
+    func_table_register(0x00F8CC, mp_00F8CC);
     func_table_register(0x00CF9B, mp_00CF9B);
     func_table_register(0x00CF50, mp_00CF50);
     func_table_register(0x00C900, mp_00C900);
