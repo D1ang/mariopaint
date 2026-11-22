@@ -3386,9 +3386,12 @@ static void mp_00EC88(void) {
             bus_write16(0x00, (uint16_t)(g_cpu.DP + 0xAC), CPU_A16());
             uint16_t sp = g_cpu.S;
             call_jsr(0x0095E7);
-            /* Leaving the editor, $95E7 does not come back: it switched
-             * the stack to go on elsewhere. Return on that stack. */
-            if (g_cpu.S != sp) return;
+            /* Leaving the editor ($EF6E) pulls the return address of this
+             * JSR (PLA), so its RTS returns from $EC88 itself, to the
+             * editor's loop: the rest of $EC88 is skipped. Here that JSR's
+             * frame was never on the stack, so S is 2 too high: undo the
+             * PLA and return. */
+            if (g_cpu.S != sp) { g_cpu.S = (uint16_t)(g_cpu.S - 2); return; }
             end_drags = true;
         } else if (y < 0x002C) {
         } else if (y < 0x0098) call_jsr(0x00F0A4);

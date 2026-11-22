@@ -111,7 +111,7 @@ static const char k_verified[] =
     /* main states (table $87B0): the sound test, two waits, state $0B */
     "00C900,00C94B,00D03EF,00D2F6F,00D505F,00CF9BF,"
     /* the music editor's scroll bar (musicscroll) */
-    "00F827F,00F8CC,00F289F,00F346";
+    "00F827F,00F8CC,00F289F,00F346,00EC88F";
 
 /* Routines that present a frame: $01:E2CE waits for the NMI; $01:E794 and
  * $01:E7C9 fade the screen in/out over several frames. */
