@@ -10,10 +10,10 @@ scratch/romlog/catalog.json.
 | apu | 228182 | 21.8% |
 | data | 157507 | 15.0% |
 | vram | 121600 | 11.6% |
-| code | 43286 | 4.1% |
+| code | 43417 | 4.1% |
 | cgram | 1024 | 0.1% |
 | native | 300 | 0.0% |
-| (not reached by the tours) | 496677 | 47.4% |
+| (not reached by the tours) | 496546 | 47.4% |
 
 ## Asset regions (DMA targets and CPU-read data)
 

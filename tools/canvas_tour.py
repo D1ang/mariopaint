@@ -162,7 +162,8 @@ SCENARIOS = {
     "bars3": [MODE_BAR, (23, 212), ("wait", 120), (128, 112), ("wait", 60)],
     # State $02 with clicks along its top row, where its size buttons are
     # ($CC10 -> $8D2C -> $CDCC).
-    "bars3b": [MODE_BAR, (23, 212), ("wait", 120)] + [p for x in range(20, 250, 16) for p in ((x, 8), ("wait", 20))],
+    "bars3b": [MODE_BAR, (23, 212), ("wait", 120)] + [p for x in range(20, 250, 16) for p in ((x, 8), ("wait", 20))] +
+              [("wait", 200), (12, 210), ("wait", 200), (100, 100), ("wait", 60)],
     # The mode bar's buttons, each from the canvas, checked alone (as bars).
     "modes": [MODE_BAR, (55, 212), ("wait", 300), (128, 112)],
     "modes2": [MODE_BAR, (102, 212), ("wait", 200), (128, 112)],

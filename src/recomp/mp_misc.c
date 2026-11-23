@@ -3580,7 +3580,193 @@ static void mp_00CDCC(void) {
     g_cpu.S = (uint16_t)(g_cpu.S + 2);
 }
 
+/* $00:CB2E: state $02's exit button (on a click): sound $41, back to the
+ * tool from before (tool switch $9FC4: 7 without a stamp set ($19FA),
+ * 4 with one, and for the stamp tool 4 with $19C0 and a flag), the
+ * previous state ($09D8), the size ($1B14 into DP $A6) and tool ($1990
+ * into $04D0) back and redrawn as each tool shows them; on at $A363. */
+static void mp_00CB2E(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+#define R16(o)   bus_read16(db, (uint16_t)(o))
+#define W16(o,v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+#define D16(o)   bus_read16(0x00, (uint16_t)(dp + (o)))
+#define DW(o,v)  bus_write16(0x00, (uint16_t)(dp + (o)), (uint16_t)(v))
+    if (!(R16(0x04CA) & 0x0020)) return;
+    CPU_SET_A16(0x0041);
+    call_jsl(0x01D368);
+    uint16_t sp = g_cpu.S;
+    if (R16(0x19FA) != 0 && (R16(0x1990) & 0x00FF) == 0x0006) {
+        bus_wram_write16((uint16_t)(sp - 1), R16(0x19C0));
+        DW(0xAA, 0x0004);
+        bus_wram_write16((uint16_t)(sp - 3), 0x0004);
+        bus_wram_write16((uint16_t)(sp - 5), 0x0001);
+        g_cpu.S = (uint16_t)(sp - 6);
+        CPU_SET_A16(0x0001);
+    } else {
+        uint16_t t = R16(0x19FA) != 0 ? 0x0004 : 0x0007;
+        DW(0xAA, t);
+        bus_wram_write16((uint16_t)(sp - 1), t);
+        bus_wram_write16((uint16_t)(sp - 3), 0x0000);
+        g_cpu.S = (uint16_t)(sp - 4);
+        CPU_SET_A16(0x0000);
+    }
+    call_jsr(0x009FC4);
+    W16(0x09D6, R16(0x09D8));
+    DW(0xA6, R16(0x1B14));
+    W16(0x04D0, R16(0x1990));
+    uint16_t c = (uint16_t)(R16(0x1990) & 0x00FF);
+    if (c == 0x0007) {
+        W16(0x1992, 0x0001);
+        CPU_SET_A16(0x000F); call_jsr(0x00B66C);
+        CPU_SET_A16((uint16_t)(R16(0x1994) + 0x0008)); call_jsr(0x00B6F4);
+        W16(0x04D0, 0x0007);
+        call_jsr(0x00A525);
+        DW(0xAE, 0x0000);
+        if (R16(0x04D0) == 0x0006) W16(0x09AB, R16(0x09AB) + 1);
+        tail_jmp(0x00A363);
+        return;
+    }
+    if (c == 0x0003 && D16(0xA6) >= 0x0070) {
+        CPU_SET_A16((uint16_t)((R16(0x04D0) >> 8) | D16(0xA6))); call_jsr(0x00B6F4);
+        CPU_SET_A16(0x000D); call_jsr(0x00B66C);
+        call_jsr(0x00A363);
+        tail_jmp(0x00A451);
+        return;
+    }
+    CPU_SET_A16((uint16_t)((R16(0x04D0) >> 8) | D16(0xA6))); call_jsr(0x00B66C);
+    uint16_t lo = (uint16_t)(R16(0x04D0) & 0x00FF);
+    CPU_SET_A16(lo == 0x0008 ? R16(0x198A) : lo);
+    call_jsr(0x00B6F4);
+    if (R16(0x04D0) == 0x0006) W16(0x09AB, R16(0x09AB) + 1);
+    tail_jmp(0x00A363);
+#undef R16
+#undef W16
+#undef D16
+#undef DW
+}
+
+/* $00:CCE1: the colour a pixel word becomes when the stamp set's colour
+ * table is applied (the set $19C2 + 1, or 0 without one ($19FA); its
+ * table at $00:CD3C: a list of [low, high) ranges for the word's bits
+ * $FC0F and of colour entries for its bits $03E0). No range: carry set.
+ * A range but no entry: $FFFF, carry clear. Else the entry's colour,
+ * carry clear. X and Y kept. */
+static void mp_00CCE1(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t px = g_cpu.X, py = g_cpu.Y;
+    uint16_t k = bus_read16(db, 0x19FA) ? (uint16_t)(bus_read16(db, 0x19C2) + 1) : 0;
+    uint16_t x = (uint16_t)(k * 6);
+    uint16_t ptr = bus_read16(db, (uint16_t)(0xCD3C + x));
+    uint16_t y = bus_read16(db, (uint16_t)(0xCD3E + x));
+    uint16_t v = (uint16_t)(py & 0xFC0F);
+    bool found = false;
+    for (;;) {
+        bool ge = v >= bus_read16(db, (uint16_t)(ptr + y));
+        y = (uint16_t)(y - 2);
+        if (!ge && v >= bus_read16(db, (uint16_t)(ptr + y))) { found = true; break; }
+        y = (uint16_t)(y - 2);
+        if (y & 0x8000) break;
+    }
+    g_cpu.X = px; g_cpu.Y = py;
+    if (!found) { g_cpu.flag_C = true; return; }
+    uint16_t w = (uint16_t)(py & 0x03E0);
+    y = bus_read16(db, (uint16_t)(0xCD40 + x));
+    for (;;) {
+        if (w == bus_read16(db, (uint16_t)(ptr + y))) {
+            CPU_SET_A16(bus_read16(db, (uint16_t)(ptr + y + 2)));
+            g_cpu.flag_C = false;
+            return;
+        }
+        y = (uint16_t)(y - 4);
+        if ((uint16_t)(y - bus_read16(db, (uint16_t)(0xCD3E + x))) & 0x8000) break;
+    }
+    CPU_SET_A16(0xFFFF);
+    g_cpu.flag_C = false;
+}
+
+/* $00:CC5B: state $02's apply button (A = DP $A8 from $8D2C, on a click):
+ * sound 4, $8B03, the tool redrawn, then every pixel word of the canvas
+ * copy ($5FFE down to 0, X cycling $3E..0) mapped through $CCE1: a found
+ * colour masks the word from the tool's table (at $1CAA or $1C2A, row
+ * from bit $400 of Y) into the long pointer DP $0A; sound $72, the upload
+ * ($0206/$0208) waited out frame by frame. */
+static void mp_00CC5B(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t dp = g_cpu.DP;
+    bus_write16(0x00, (uint16_t)(dp + 0xA8), CPU_A16());
+    if (!(bus_read16(db, 0x04CA) & 0x0020)) return;
+    CPU_SET_A16(0x0004); call_jsl(0x01D368);
+    call_jsr(0x008B03);
+    bus_write16(db, 0x09A7, bus_read16(db, 0x09A7) + 1);
+    uint16_t a6 = bus_read16(0x00, (uint16_t)(dp + 0xA6));
+    uint16_t v = (uint16_t)(bus_read16(0x00, (uint16_t)(dp + 0xA8)) | a6);
+    CPU_SET_A16(v);
+    uint16_t base;
+    if (a6 < 0x0070) { call_jsr(0x00B66C); call_jsr(0x00E64F); base = 0x1CAA; }
+    else             { call_jsr(0x00B6F4); call_jsr(0x00E64F); base = 0x1C2A; }
+    uint16_t sp = g_cpu.S;
+    bus_wram_write16((uint16_t)(sp - 1), base);
+    g_cpu.S = (uint16_t)(sp - 2);
+    bus_write16(db, 0x0206, 0);
+    uint32_t lp = bus_read16(0x00, (uint16_t)(dp + 0x0A)) | ((uint32_t)bus_read8(0x00, (uint16_t)(dp + 0x0C)) << 16);
+    uint16_t y = 0x5FFE, x = 0x003E;
+    for (;;) {
+        g_cpu.X = x; g_cpu.Y = y;
+        mp_00CCE1();
+        if (!g_cpu.flag_C) {
+            uint16_t r = CPU_A16();
+            uint16_t yy = (uint16_t)(((y & 0x0400) >> 4) | x);
+            uint16_t val = (uint16_t)(bus_read16(db, (uint16_t)(base + yy)) & r);
+            uint32_t t = lp + y;
+            bus_write16((uint8_t)(t >> 16), (uint16_t)t, val);
+            CPU_SET_A16(r);
+        }
+        x = (uint16_t)((x - 2) & 0x003F);
+        y = (uint16_t)(y - 2);
+        if (y & 0x8000) break;
+    }
+    g_cpu.X = x; g_cpu.Y = y;
+    g_cpu.S = sp;
+    CPU_SET_A16(0x0072); call_jsl(0x01D368);
+    bus_write16(db, 0x0208, 0);
+    bus_write16(db, 0x0206, bus_read16(db, 0x0206) + 1);
+    do { call_jsl(0x01E2CE); } while (bus_read16(db, 0x0208) != 0 && !g_quit);
+    bus_write16(db, 0x09A7, 0);
+}
+
+/* $00:CC10: state $02: on a press, the top row's buttons ($8D2C: 1 the
+ * apply button $CC5B, 2 the size buttons $CDCC), and on a click in the
+ * bottom bar its exit ($CB2E) or the button at x $D8-$E6 ($9760). */
+static void mp_00CC10(void) {
+    uint8_t db = g_cpu.DB;
+    if (!(bus_read16(db, 0x04CA) & 0x0011)) return;
+    uint16_t y = bus_read16(db, 0x04DE);
+    if (y < 0x0018) {
+        call_jsr(0x008D2C);
+        if (g_cpu.X == 0x0001) { mp_00CC5B(); return; }
+        if (g_cpu.X == 0x0002) {
+            uint16_t sp = g_cpu.S;
+            call_jsr(0x00CDCC);
+            /* $CDCC pulls this JSR's return address (PLA) so its RTS
+             * leaves $CC10; here that frame was never on the stack. */
+            if (g_cpu.S != sp) g_cpu.S = (uint16_t)(g_cpu.S - 2);
+        }
+        return;
+    }
+    if (y < 0x00C8 || !(bus_read16(db, 0x04CA) & 0x0020)) return;
+    uint16_t x = bus_read16(db, 0x04DC);
+    if (x < 0x0008) return;
+    if (x < 0x0017) { mp_00CB2E(); return; }
+    if (x < 0x00D8 || x >= 0x00E7) return;
+    tail_jmp(0x009760);
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00CC10, mp_00CC10);
+    func_table_register(0x00CB2E, mp_00CB2E);
+    func_table_register(0x00CCE1, mp_00CCE1);
+    func_table_register(0x00CC5B, mp_00CC5B);
     func_table_register(0x00CDCC, mp_00CDCC);
     func_table_register(0x00E19B, mp_00E19B);
     func_table_register(0x00E335, mp_00E335);
