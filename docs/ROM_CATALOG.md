@@ -1,19 +1,19 @@
 # ROM catalogue
 
 What the tours read from the ROM (tools/rom_catalog.py over the
-SNESRECOMP_ROMLOG logs of 114 scenario runs on the genuine ROM).
+SNESRECOMP_ROMLOG logs of 116 scenario runs on the genuine ROM).
 Addresses and sizes only; the full region list is in
 scratch/romlog/catalog.json.
 
 | kind | bytes | share |
 |---|---:|---:|
 | apu | 228182 | 21.8% |
-| data | 156117 | 14.9% |
+| data | 156333 | 14.9% |
 | vram | 119552 | 11.4% |
-| code | 42856 | 4.1% |
+| code | 42984 | 4.1% |
 | cgram | 1024 | 0.1% |
 | native | 300 | 0.0% |
-| (not reached by the tours) | 500545 | 47.7% |
+| (not reached by the tours) | 500201 | 47.7% |
 
 ## Asset regions (DMA targets and CPU-read data)
 
@@ -200,16 +200,15 @@ scratch/romlog/catalog.json.
 | 0DB0A2 | 06B0A2 | 34 | data | 01F91E |
 | 0DB0C8 | 06B0C8 | 24 | data | 01F91E |
 | 0DB0F6 | 06B0F6 | 22 | data | 01F91E |
-| 0DB116 | 06B116 | 16 | data | 01F91E |
+| 0DB110 | 06B110 | 22 | data | 01F91E |
 | 0DB19C | 06B19C | 56 | data | 01F91E |
 | 0DB1DC | 06B1DC | 24 | data | 01FA68 |
-| 0DB200 | 06B200 | 20 | data | 01F91E |
+| 0DB200 | 06B200 | 22 | data | 01F91E |
 | 0DB242 | 06B242 | 56 | data | 01F91E |
 | 0DB2BA | 06B2BA | 30 | data | 01F91E |
 | 0DB2DA | 06B2DA | 50 | data | 01F91E |
 | 0DB358 | 06B358 | 28 | data | 01F91E |
-| 0DB3C8 | 06B3C8 | 48 | data | 01F91E |
-| 0DB438 | 06B438 | 118 | data | 01F91E |
+| 0DB3C8 | 06B3C8 | 230 | data | 01F91E |
 | 0DB53D | 06B53D | 111 | data | 01F91E |
 | 0DB5D3 | 06B5D3 | 22 | data | 01F91E |
 | 0DB653 | 06B653 | 127 | data | 01F91E |
@@ -222,7 +221,7 @@ scratch/romlog/catalog.json.
 | 0DCF8C | 06CF8C | 668 | data | 01F91E |
 | 0DD283 | 06D283 | 24 | data | 01F91E |
 | 0DD3F9 | 06D3F9 | 32 | data | 01F91E |
-| 0DD4F1 | 06D4F1 | 375 | data | 01F91E |
+| 0DD4F1 | 06D4F1 | 432 | data | 01F91E |
 | 0DD6A8 | 06D6A8 | 187 | data | 01F91E |
 | 0DD829 | 06D829 | 571 | data | 01F91E |
 | 0DDA72 | 06DA72 | 93 | data | 01F91E |
@@ -262,8 +261,7 @@ scratch/romlog/catalog.json.
 | 0DF571 | 06F571 | 69 | data | 01F84F |
 | 0DF5CB | 06F5CB | 65 | data | 01F84F |
 | 0DF621 | 06F621 | 69 | data | 01F84F |
-| 0DF66F | 06F66F | 57 | data | 01F84F |
-| 0DF6C0 | 06F6C0 | 20 | data | 01F84F |
+| 0DF66F | 06F66F | 117 | data | 01F84F |
 | 0EA000 | 072000 | 24576 | data | 01EC4B |
 | 0F8006 | 078006 | 20 | data | 01962C |
 | 0F8114 | 078114 | 62 | data | 01962C |

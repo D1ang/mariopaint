@@ -166,6 +166,11 @@ SCENARIOS = {
     "modes3": [MODE_BAR, (129, 212), ("wait", 200), (128, 112)],
     "modes4": [MODE_BAR, (150, 212), ("wait", 200), (128, 112)],
     "modes5": [MODE_BAR, (168, 212), ("wait", 200), (128, 112)],
+    # State $1D ($E4B9) with its four rows picked in turn, then left by its
+    # exit button ($E5F4).
+    "modes4b": [MODE_BAR, (150, 212), ("wait", 200), (140, 76), ("wait", 60), (140, 108), ("wait", 60),
+                (140, 140), ("wait", 60), (140, 172), ("wait", 60), (140, 76), ("wait", 60), (12, 210),
+                ("wait", 300), (100, 100), ("wait", 60)],
     "modes6": [MODE_BAR, (192, 212), ("wait", 100), (128, 112), ("wait", 60)],
     "modes7": [MODE_BAR, (216, 212), ("wait", 200), (128, 112)],
     # Bar mode 8 (from the animation player's 64-79), its buttons, checked

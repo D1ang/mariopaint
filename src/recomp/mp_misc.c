@@ -3415,7 +3415,101 @@ static void mp_00EC88(void) {
     call_jsl(0x01E2F3);
 }
 
+/* $00:E5F4: leave state $10 by its exit button: sound $41, a fade
+ * ($01:E06F), the tool back ($1010 into $04D0, $9378), the canvas
+ * ($01:CDE1 with $CE4B, $C414 or $C3DE with $19FA), uploaded and a frame,
+ * the previous state ($09D8), $A451, $A525, tool switch 7 ($9FC4 with DP
+ * $AA = 7 and 7, 0 on the stack), $09AB counted for the stamp tool, and
+ * on at $A363. */
+static void mp_00E5F4(void) {
+    uint8_t db = g_cpu.DB;
+    CPU_SET_A16(0x0041); call_jsl(0x01D368);
+    call_jsl(0x01E06F);
+    bus_write16(db, 0x04D0, bus_read16(db, 0x1010));
+    call_jsr(0x009378);
+    CPU_SET_A16(0xCE4B); call_jsl(0x01CDE1);
+    if (bus_read16(db, 0x19FA) == 0) call_jsr(0x00C414); else call_jsr(0x00C3DE);
+    call_jsl(0x01DE97);
+    call_jsl(0x01E2CE);
+    bus_write16(db, 0x09D6, bus_read16(db, 0x09D8));
+    call_jsr(0x00A451);
+    call_jsr(0x00A525);
+    bus_write16(0x00, (uint16_t)(g_cpu.DP + 0xAA), 0x0007);
+    uint16_t sp = g_cpu.S;
+    bus_wram_write16((uint16_t)(sp - 1), 0x0007);
+    bus_wram_write16((uint16_t)(sp - 3), 0x0000);
+    g_cpu.S = (uint16_t)(sp - 4);
+    CPU_SET_A16(0x0000);
+    call_jsr(0x009FC4);
+    if (bus_read16(db, 0x04D0) == 0x0006) bus_write16(db, 0x09AB, bus_read16(db, 0x09AB) + 1);
+    tail_jmp(0x00A363);
+}
+
+/* $00:E4B9: state $10: the objects $4C..$3F drawn ($01:F84F); with a row
+ * picked ($1012) four marks at $1A3A slide by $1014, which turns at $9900
+ * and $3000; a click on a row (x $58-$CF, y $3C-$BB: rows 1, 2, 3, 0 by 32)
+ * other than the current one picks it (sound $01:D3AB, the marks at $1A15
+ * reset, the new row's two marks off, the row-dependent ones), or on the
+ * exit button (y from $CC, x $08-$16: $E5F4). */
+static void mp_00E4B9(void) {
+    uint8_t db = g_cpu.DB;
+#define R16(o)   bus_read16(db, (uint16_t)(o))
+#define W16(o,v) bus_write16(db, (uint16_t)(o), (uint16_t)(v))
+    uint16_t a = 0x004C;
+    do {
+        CPU_SET_A16(a);
+        call_jsl(0x01F84F);
+        a = (uint16_t)(a - 1);
+    } while (!((uint16_t)(a - 0x003F) & 0x8000));
+    if (R16(0x1012) != 0) {
+        for (int x = 0x18; x >= 0; x -= 8) W16(0x1A3A + x, R16(0x1A3A + x) + R16(0x1014));
+        if (R16(0x1A3A) == 0x9900) W16(0x1014, 0xFFE0);
+        if (R16(0x1A3A) == 0x3000) W16(0x1014, 0x0020);
+    }
+    if (!(R16(0x04CA) & 0x0020)) return;
+    uint16_t x = R16(0x04DC), y = R16(0x04DE);
+    uint16_t row = 0xFFFF;
+    if (x >= 0x0058 && x < 0x00D0) {
+        if (y < 0x003C) return;
+        if (y < 0x005C) row = 1;
+        else if (y < 0x007C) row = 2;
+        else if (y < 0x009C) row = 3;
+        else if (y < 0x00BC) row = 0;
+    }
+    if (row == 0xFFFF) {
+        if (y < 0x00CC || x < 0x0008 || x >= 0x0017) return;
+        mp_00E5F4();
+        return;
+    }
+    if (row == R16(0x1012)) return;
+    W16(0x1012, row);
+    call_jsl(0x01D3AB);
+    W16(0x1B0D, 0x07FF); W16(0x1A15, 0x07FF); W16(0x1A1D, 0x07FF); W16(0x1A25, 0x07FF);
+    W16(0x1A2D, 0x03FF); W16(0x1A35, 0x03FF);
+    W16(0x1A3D, 0x04FF);
+    W16(0x1A45, 0xFFFF); W16(0x1A4D, 0xFFFF); W16(0x1A55, 0xFFFF);
+    W16(0x1A5D, 0x21FF); W16(0x1A65, 0x24FF); W16(0x1A6D, 0x27FF);
+    W16(0x1A75, 0x04FF);
+    uint16_t o = (uint16_t)(((uint16_t)(R16(0x1012) + 0x003F) << 3) & 0x00FF);
+    W16(0x1A15 + o, 0xFFFF);
+    o = (uint16_t)(bus_read8(db, (uint16_t)(0xE4B5 + R16(0x1012))));
+    W16(0x1A15 + o, 0xFFFF);
+    if (o == 0x0048) {
+        W16(0x1A65, 0x00FF); W16(0x1A6D, 0x00FF);
+        W16(0x1A66, 0x000A); W16(0x1A6E, 0x0014);
+    }
+    g_cpu.X = o;
+    if (R16(0x1012) != 0) {
+        W16(0x1A45, 0x02FF); W16(0x1A4D, 0x02FF); W16(0x1A55, 0x02FF);
+        W16(0x1A3D, 0xFFFF);
+    }
+#undef R16
+#undef W16
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00E4B9, mp_00E4B9);
+    func_table_register(0x00E5F4, mp_00E5F4);
     func_table_register(0x00EC88, mp_00EC88);
     func_table_register(0x00F289, mp_00F289);
     func_table_register(0x00F346, mp_00F346);
