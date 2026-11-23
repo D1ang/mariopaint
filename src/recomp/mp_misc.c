@@ -3507,7 +3507,83 @@ static void mp_00E4B9(void) {
 #undef W16
 }
 
+/* $00:E19B: the colour of a cell of the 16x16 pattern grid (Y: bits
+ * 0-2 the pixel, 3 the half, 4-6 the row, 7 the second tile): its four
+ * bitplane bits from $102C/$101C (masked by $00:E203) into $1134, and
+ * the colour from $00:E213. X and Y kept. */
+static void mp_00E19B(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t y = g_cpu.Y;
+    uint16_t x = (uint16_t)(((y & 0x0080) >> 1) + ((y & 0x0070) >> 3) + ((y & 0x0008) << 2));
+    uint16_t m = bus_read16(db, (uint16_t)(0xE203 + ((y & 0x0007) << 1)));
+    uint16_t v = 0;
+    uint16_t a = (uint16_t)(bus_read16(db, (uint16_t)(0x102C + x)) & m);
+    if (a & 0xFF00) v |= 1;
+    v <<= 1;
+    if (a & 0x00FF) v |= 1;
+    v <<= 1;
+    a = (uint16_t)(bus_read16(db, (uint16_t)(0x101C + x)) & m);
+    if (a & 0xFF00) v |= 1;
+    v <<= 1;
+    if (a & 0x00FF) v |= 1;
+    bus_write16(db, 0x1134, v);
+    CPU_SET_A16(bus_read16(db, (uint16_t)(0xE213 + (v << 1))));
+}
+
+/* $00:E335: in state $15, a click on the pattern grid (x and y $30-$AF)
+ * picks that cell's colour ($E19B; $1124, the cursor $04D0 = colour << 8
+ * | $0B), the cursor colours ($E2CC), $E64F and sound 4. */
+static void mp_00E335(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t x = bus_read16(db, 0x04DC), y = bus_read16(db, 0x04DE);
+    if (x < 0x0030 || x >= 0x00B0 || y < 0x0030 || y >= 0x00B0) return;
+    uint16_t row = (uint16_t)(((uint16_t)(y - 0x0030) & 0xFFF8) << 1);
+    g_cpu.Y = (uint16_t)(((uint16_t)(x - 0x0030) >> 3) + row);
+    CPU_SET_A16(row);
+    mp_00E19B();
+    uint16_t c = (uint16_t)(CPU_A16() & 0x000F);
+    bus_write16(db, 0x1124, c);
+    bus_write16(db, 0x04D0, (uint16_t)((c << 8) | 0x000B));
+    call_jsr(0x00E2CC);
+    call_jsr(0x00E64F);
+    CPU_SET_A16(0x0004);
+    call_jsl(0x01D368);
+}
+
+/* $00:CDCC: in state $02, the size buttons (right or left click, $04CA
+ * bits $40/$04): the size in DP $A6 steps by $10 up or down (skipping
+ * $60, kept to $F0 bits), its sound ($62 + size/16, one less from 6), the
+ * tool redrawn with it ($B66C below $70, else $B6F4, with DP $A8 | $A6),
+ * $A363; then it drops its caller's return address (PLA), so its RTS
+ * leaves $CC10 too. */
+static void mp_00CDCC(void) {
+    uint16_t y = 0x0010;
+    uint16_t a = bus_wram_read16(0x04CA);
+    g_cpu.Y = y;
+    if (!(a & 0x0044)) { CPU_SET_A16((uint16_t)(a & 0x0044)); return; }
+    if (!(a & 0x0040)) y = 0xFFF0;
+    uint16_t dp = g_cpu.DP;
+    uint16_t t = (uint16_t)(bus_read16(0x00, (uint16_t)(dp + 0xA6)) + y);
+    if (t == 0x0060) t = (uint16_t)(t + y);
+    t &= 0x00F0;
+    bus_write16(0x00, (uint16_t)(dp + 0xA6), t);
+    uint16_t n = (uint16_t)(t >> 4);
+    if (n >= 0x0006) n--;
+    CPU_SET_A16((uint16_t)(n + 0x0062));
+    call_jsl(0x01D368);
+    g_cpu.Y = y;
+    uint16_t v = (uint16_t)(bus_read16(0x00, (uint16_t)(dp + 0xA8)) | bus_read16(0x00, (uint16_t)(dp + 0xA6)));
+    CPU_SET_A16(v);
+    if (bus_read16(0x00, (uint16_t)(dp + 0xA6)) < 0x0070) call_jsr(0x00B66C); else call_jsr(0x00B6F4);
+    call_jsr(0x00A363);
+    CPU_SET_A16(bus_wram_read16((uint16_t)(g_cpu.S + 1)));           /* PLA: the caller's return */
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00CDCC, mp_00CDCC);
+    func_table_register(0x00E19B, mp_00E19B);
+    func_table_register(0x00E335, mp_00E335);
     func_table_register(0x00E4B9, mp_00E4B9);
     func_table_register(0x00E5F4, mp_00E5F4);
     func_table_register(0x00EC88, mp_00EC88);

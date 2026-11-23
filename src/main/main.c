@@ -113,7 +113,9 @@ static const char k_verified[] =
     /* the music editor's scroll bar (musicscroll) */
     "00F827F,00F8CC,00F289F,00F346,00EC88F,"
     /* state $1D: its rows and exit (modes4, modes4b) */
-    "00E4B9F";
+    "00E4B9F,"
+    /* state $02: its size buttons (bars3b) */
+    "00CDCCF";
 
 /* Routines that present a frame: $01:E2CE waits for the NMI; $01:E794 and
  * $01:E7C9 fade the screen in/out over several frames. */

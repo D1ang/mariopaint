@@ -1,26 +1,26 @@
 # ROM catalogue
 
 What the tours read from the ROM (tools/rom_catalog.py over the
-SNESRECOMP_ROMLOG logs of 116 scenario runs on the genuine ROM).
+SNESRECOMP_ROMLOG logs of 118 scenario runs on the genuine ROM).
 Addresses and sizes only; the full region list is in
 scratch/romlog/catalog.json.
 
 | kind | bytes | share |
 |---|---:|---:|
 | apu | 228182 | 21.8% |
-| data | 156333 | 14.9% |
-| vram | 119552 | 11.4% |
-| code | 42984 | 4.1% |
+| data | 157507 | 15.0% |
+| vram | 121600 | 11.6% |
+| code | 43286 | 4.1% |
 | cgram | 1024 | 0.1% |
 | native | 300 | 0.0% |
-| (not reached by the tours) | 500201 | 47.7% |
+| (not reached by the tours) | 496677 | 47.4% |
 
 ## Asset regions (DMA targets and CPU-read data)
 
 | SNES | ROM offset | bytes | kind | reader / target |
 |---|---|---:|---|---|
 | 00822A | 00022A | 18 | data | 0081CA |
-| 008D5C | 000D5C | 60 | data | 008D2C |
+| 008D5C | 000D5C | 64 | data | 008D2C |
 | 008DCB | 000DCB | 64 | data | 008D2C |
 | 008E89 | 000E89 | 166 | data | 008E0B |
 | 008F3D | 000F3D | 40 | data | 008E0B |
@@ -164,22 +164,16 @@ scratch/romlog/catalog.json.
 | 03EA00 | 01EA00 | 384 | data | 00A25B |
 | 03FC00 | 01FC00 | 1024 | vram | 7000 |
 | 04A000 | 022000 | 22528 | vram | 6000 |
-| 04FA00 | 027A00 | 3584 | vram | 7D00 |
+| 04FA00 | 027A00 | 5632 | vram | 7D00 |
 | 05B000 | 02B000 | 2048 | vram | 7000 |
 | 05F800 | 02F800 | 2048 | data | 00DE8E |
 | 068000 | 030000 | 2048 | vram | 7000 |
 | 07E800 | 03E800 | 33280 | vram | 7000 |
 | 08EE00 | 046E00 | 3072 | vram | 5600 |
 | 098000 | 048000 | 32768 | vram | 4000 |
-| 0A8000 | 050000 | 128 | data | 00B66C |
-| 0A80C0 | 0500C0 | 64 | data | 00B66C |
-| 0A81C0 | 0501C0 | 192 | data | 00B66C |
-| 0A82C0 | 0502C0 | 64 | data | 00B66C |
-| 0A83C0 | 0503C0 | 64 | data | 00B66C |
-| 0A8440 | 050440 | 64 | data | 00B66C |
-| 0A8540 | 050540 | 192 | data | 00B66C |
-| 0A8640 | 050640 | 64 | data | 00B66C |
-| 0A8740 | 050740 | 192 | data | 00B66C |
+| 0A8000 | 050000 | 2048 | data | 00B66C |
+| 0A8D80 | 050D80 | 64 | data | 00B66C |
+| 0A8F80 | 050F80 | 64 | data | 00B66C |
 | 0AB000 | 053000 | 128 | vram | 46E0 |
 | 0AB0C0 | 0530C0 | 64 | vram | 46E0 |
 | 0AB200 | 053200 | 128 | vram | 47E0 |
