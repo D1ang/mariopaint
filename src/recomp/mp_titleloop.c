@@ -295,6 +295,178 @@ void mp_0183B6(void) {
 }
 
 
+/* ========================================================================
+ * Title state 1 ($833F) and what a click on a logo letter does.
+ * ======================================================================== */
+
+/* $01:833F: title state 1: the letters drawn, Mario animated, then the
+ * letter click test ($8D35, entered by JMP). */
+void mp_01833F(void) {
+    CPU_SET_A16(0xFFFF); call_jsr(0x018C43);
+    call_jsr(0x018CB7);
+    tail_jmp(0x018D35);
+}
+
+/* $01:8D35: a left click on the letter row (Y $40..$4F) looks for the
+ * letter under the cursor: ten [left, width] pairs at $01:8D85, searched
+ * from the last, then JMP ($8D71,X) to that letter's handler. */
+void mp_018D35(void) {
+    uint16_t b = bus_read16(0x00, 0x04CA);
+    CPU_SET_A16(b);
+    cpu_update_nz16((uint16_t)(b & 0x0020));
+    if (!(b & 0x0020)) return;                            /* $8D4C */
+    uint16_t y = bus_read16(0x00, 0x04DE);
+    CPU_SET_A16(y);
+    if (y < 0x0040) { g_cpu.flag_C = false; cpu_update_nz16((uint16_t)(y - 0x0040)); return; }
+    cpu_update_nz16((uint16_t)(y - 0x0050));
+    g_cpu.flag_C = y >= 0x0050;
+    if (y >= 0x0050) return;
+    uint8_t cx = bus_read8(0x00, 0x04DC);                 /* SEP #$20 */
+    uint8_t a = 0;
+    for (int x = 0x12; x >= 0; x -= 2) {
+        a = (uint8_t)(cx - bus_read8(0x01, (uint16_t)(0x8D85 + x)));
+        uint8_t w = bus_read8(0x01, (uint16_t)(0x8D86 + x));
+        if (a < w) {                                      /* $8D68 */
+            g_cpu.X = (uint16_t)x;
+            CPU_SET_A16((uint16_t)x);
+            cpu_update_nz16((uint16_t)x);
+            g_cpu.flag_C = false;
+            tail_jmp(0x010000u | bus_read16(0x01, (uint16_t)(0x8D71 + x)));
+            return;
+        }
+        g_cpu.flag_C = true;
+    }
+    g_cpu.X = 0xFFFE;
+    CPU_SET_A16((uint16_t)((y & 0xFF00) | a));
+    g_cpu.flag_N = true;                                  /* DEX past 0 */
+    g_cpu.flag_Z = false;
+}
+
+/* A letter's sound ($01:D368), its scene's sprite slot and the next state. */
+static void letter_sound(uint16_t sound) {
+    CPU_SET_A16(sound); call_jsl(0x01D368);
+}
+static void letter_slot(uint16_t slot) {
+    CPU_SET_A16(slot); call_jsl(0x019DFE);
+    CPU_SET_A16(slot);                                    /* the callers' PHA/PLA */
+}
+static void letter_state(uint16_t state) {
+    CPU_SET_A16(state); TW16(0x0001, state);
+}
+
+/* $01:8D99: toggle $0593, state 2. */
+void mp_018D99(void) {
+    bus_write8(0x00, 0x0593, (uint8_t)(bus_read8(0x00, 0x0593) ^ 0x01));
+    letter_state(0x0002);
+}
+
+/* $01:8DAE, $8DC3, $8DFA, $8E8E: a sound, a sprite slot, the state. */
+void mp_018DAE(void) { letter_sound(0x004F); CPU_SET_A16(0x0001); call_jsl(0x019DFE); letter_state(0x0003); }
+void mp_018DC3(void) { letter_sound(0x0051); CPU_SET_A16(0x0002); call_jsl(0x019DFE); letter_state(0x0004); }
+void mp_018DFA(void) { letter_sound(0x0055); CPU_SET_A16(0x0003); call_jsl(0x019DFE); letter_state(0x0006); }
+void mp_018E8E(void) { letter_sound(0x0059); CPU_SET_A16(0x000D); call_jsl(0x019DFE); letter_state(0x0008); }
+
+/* $01:8DD8: the palettes at $02:FC00 to $0007, colour $9D at $0207,
+ * state 5. */
+void mp_018DD8(void) {
+    letter_sound(0x0053);
+    for (int x = 0x01FE; x >= 0; x -= 2)
+        TW16(0x0007 + x, bus_read16(0x02, (uint16_t)(0xFC00 + x)));
+    g_cpu.X = 0xFFFE;
+    TW16(0x0207, 0x009D);
+    letter_state(0x0005);
+}
+
+/* $01:8E0F: sprite slots 12 down to 4, a picture into $7E:24C0, then the
+ * window opens over $80 and closes over $7F frames ($8F1C with the frame
+ * count) while the title keeps running; state 7. $8CBF can leave the title
+ * from inside (s_title_exit; the stack is then at the title's stack point). */
+void mp_018E0F(void) {
+    letter_sound(0x0057);
+    for (uint16_t slot = 0x000C; slot >= 0x0004; slot--) letter_slot(slot);
+    CPU_SET_A16(0x0003);
+    TW16(0x020B, 0);
+    for (int x = 0x027E; x >= 0; x -= 2)
+        bus_write16(0x7E, (uint16_t)(0x24C0 + x), bus_read16(0x02, (uint16_t)(0xC480 + x)));
+    g_cpu.X = 0xFFFE;
+    call_jsl(0x01DE97);
+    CPU_SET_A16(0x0080); call_jsr(0x018F1C);
+    CPU_SET_A16(0x0001); bus_write16(0x00, 0x0220, 0x0001);
+    bus_write8(0x00, 0x0111, 0x03);
+    CPU_SET_A16(0x0003);
+    call_jsr(0x018CBF);
+    if (s_title_exit) { g_cpu.S = T16(0x0003); return; }
+    CPU_SET_A16(0x007F);
+    uint16_t n = 0x007F;
+    do {                                                  /* $8E58 */
+        push_a16(n);
+        call_jsr(0x018F1C);
+        CPU_SET_A16(0x0001); bus_write16(0x00, 0x0220, 0x0001);
+        call_jsl(0x01E06F);
+        call_jsr(0x0182B1);
+        call_jsr(0x0182F6);
+        CPU_SET_A16(0xFFFF); call_jsr(0x018C43);
+        call_jsr(0x018CB7);
+        call_jsr(0x018CBF);
+        if (s_title_exit || g_quit) { g_cpu.S = T16(0x0003); return; }
+        g_cpu.S = (uint16_t)(g_cpu.S + 2);                /* PLA */
+        n--;
+        CPU_SET_A16(n);
+        cpu_update_nz16(n);
+    } while (n != 0);
+    bus_write16(0x00, 0x0220, 0xFFFF);
+    TW16(0x021B, 0);
+    letter_state(0x0007);
+}
+
+/* $01:8EA3: sprite slots $25 down to $0E, state 9. */
+void mp_018EA3(void) {
+    letter_sound(0x005B);
+    for (uint16_t slot = 0x0025; slot >= 0x000E; slot--) letter_slot(slot);
+    letter_state(0x0009);
+}
+
+/* $01:8EC0: the screen off while the tilemaps change: BG12NBA mirror $44,
+ * both tilemaps refilled, state $0A, the screen on again. */
+void mp_018EC0(void) {
+    letter_sound(0x005D);
+    call_jsl(0x01E30E);
+    bus_write8(0x00, 0x010E, 0x44);
+    CPU_SET_A16(0x0045); call_jsl(0x01E024);
+    call_jsl(0x01DE97);
+    CPU_SET_A16(0x1CE0); call_jsl(0x01E033);
+    CPU_SET_A16(0x3CE0);
+    for (int x = 0x017E; x >= 0; x -= 2)
+        bus_write16(0x7E, (uint16_t)(0x2AC0 + x), 0x3CE0);
+    g_cpu.X = 0xFFFE;
+    call_jsl(0x01DEB2);
+    letter_state(0x000A);
+    call_jsl(0x01E2F3);
+}
+
+/* $01:8F04: the pen graphics of $00:96CD, cursor sprite $EE, state $0B. */
+void mp_018F04(void) {
+    letter_sound(0x005F);
+    call_jsl(0x0096CD);
+    CPU_SET_A16(0x00EE);
+    TW16(0x0005, 0x00EE);
+    letter_state(0x000B);
+}
+
+/* $00:96CD (JSL): pen graphics $3E and 1, with DB = 0. */
+void mp_0096CD(void) {
+    uint8_t db = g_cpu.DB;
+    bus_wram_write8(g_cpu.S, db);                         /* PHB */
+    g_cpu.S = (uint16_t)(g_cpu.S - 1);
+    g_cpu.DB = 0x00;
+    CPU_SET_A16(0x003E); call_jsr(0x00B66C);
+    CPU_SET_A16(0x0001); call_jsr(0x00B6F4);
+    g_cpu.S = (uint16_t)(g_cpu.S + 1);
+    g_cpu.DB = db;                                        /* PLB */
+    cpu_update_nz8(db);
+}
+
+
 /* $01:84E2: title state 4: a click on the logo ($9244 with X = 2, carry
  * clear) plays $51; when $0596 is set, sound $52 and on to state 1. */
 void mp_0184E2(void) {
@@ -592,6 +764,7 @@ void mp_0188E3(void) {
             title_draw_done();
             return;
         }
+        CPU_SET_A16(T16(0x020F));                        /* $89E2 */
         if (T16(0x020F) != 0x00FF) { call_jsr(0x018B6E); call_jsl(0x01DE97); }
         CPU_SET_A16(T16(0x020F)); call_jsr(0x018BB5);
         call_jsl(0x01DEB2);
@@ -886,7 +1059,7 @@ end_demo:
         if (n == 0x0005) n = 0;
         bus_wram_write16(0x0008, n);
         bus_wram_write16(0x04E2, 0x0000);
-        mp_01E7C9();
+        call_jsl(0x01E7C9);
         func_table_call(0x0082B8);
     }
 }
@@ -943,6 +1116,19 @@ void mp_register_titleloop(void) {
     func_table_register(0x01834B, mp_01834B);
     func_table_register(0x0183B6, mp_0183B6);
     func_table_register(0x018260, mp_018260);
+    func_table_register(0x01833F, mp_01833F);
+    func_table_register(0x018D35, mp_018D35);
+    func_table_register(0x018D99, mp_018D99);
+    func_table_register(0x018DAE, mp_018DAE);
+    func_table_register(0x018DC3, mp_018DC3);
+    func_table_register(0x018DD8, mp_018DD8);
+    func_table_register(0x018DFA, mp_018DFA);
+    func_table_register(0x018E0F, mp_018E0F);
+    func_table_register(0x018E8E, mp_018E8E);
+    func_table_register(0x018EA3, mp_018EA3);
+    func_table_register(0x018EC0, mp_018EC0);
+    func_table_register(0x018F04, mp_018F04);
+    func_table_register(0x0096CD, mp_0096CD);
     func_table_register(0x0182B1, mp_0182B1);
     func_table_register(0x0182F6, mp_0182F6);
     func_table_register(0x018308, mp_018308);

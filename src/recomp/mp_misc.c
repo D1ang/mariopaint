@@ -2832,6 +2832,46 @@ static void mp_00DA49(void) {
     g_cpu.S = (uint16_t)(g_cpu.S + 2);
 }
 
+/* CMP with a 16-bit A: the flags the chain below returns with. */
+static bool cmp16_below(uint16_t a, uint16_t v) {
+    uint16_t r = (uint16_t)(a - v);
+    g_cpu.flag_C = a >= v;
+    g_cpu.flag_Z = r == 0;
+    g_cpu.flag_N = (r & 0x8000) != 0;
+    return a < v;
+}
+
+/* $00:DA7B: the next buttons of that chain, x $C0-$E7 in A. Two boxes,
+ * y $30-$6F and y $78-$AF; a button counts unless the tilemap at $7E:2800
+ * shows a blank tile ($0CA7, $0CC6, $0CC7) under the cursor. The upper box
+ * sets $1AFD = $FFFF and $09D6 = $17; the lower one copies $E2A3 and sets
+ * $1B05 = $FFFF and $09D6 = $1A. A hit returns to the caller's caller. */
+static void mp_00DA7B(void) {
+    uint16_t x = CPU_A16();
+    if (cmp16_below(x, 0x00C0) || !cmp16_below(x, 0x00E8)) return;
+    uint16_t y = bus_wram_read16(0x04DE);
+    CPU_SET_A16(y);
+    if (cmp16_below(y, 0x0030)) return;
+    bool lower = !cmp16_below(y, 0x0070);
+    if (lower && (cmp16_below(y, 0x0078) || !cmp16_below(y, 0x00B0))) return;
+    uint16_t row = (uint16_t)((y & 0xFFF8) << 3);
+    push_a16(row);                                           /* PHA; ADC $01,s; PLA */
+    g_cpu.X = (uint16_t)(((bus_wram_read16(0x04DC) & 0xFFF8) >> 2) + row);
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+    uint16_t tile = bus_read16(0x7E, (uint16_t)(0x2800 + g_cpu.X));
+    CPU_SET_A16(tile);
+    const uint16_t blank[3] = { 0x0CA7, 0x0CC6, 0x0CC7 };
+    for (int i = 0; i < 3; i++) {
+        cmp16_below(tile, blank[i]);
+        if (tile == blank[i]) return;
+    }
+    if (lower) mp_00E2A3();
+    bus_wram_write16(lower ? 0x1B05 : 0x1AFD, 0xFFFF);
+    bus_wram_write16(0x09D6, lower ? 0x001A : 0x0017);
+    CPU_SET_A16(st16(1));
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+}
+
 /* $00:9F87: clamp the rectangle on the stack (x at 9,S and 7,S, y at 5,S
  * and 3,S) to the canvas $19B6..$19B8 / $19BA..$19BC, by the sign of the
  * difference as the ROM's CMP/BMI/BPL do. */
@@ -3027,6 +3067,11 @@ static void mp_00BBD8(void) {
     if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
 #undef R16
 #undef W16
+}
+
+/* $00:BBD4 (JSL): one step of the animation playback $00:BBD8. */
+static void mp_00BBD4(void) {
+    call_jsr(0x00BBD8);
 }
 
 /* ---- Main states ($09D6, table $87B0). ---- */
@@ -3888,6 +3933,7 @@ void mp_register_misc(void) {
     func_table_register(0x00D505, mp_00D505);
     func_table_register(0x00D03E, mp_00D03E);
     func_table_register(0x00D2F6, mp_00D2F6);
+    func_table_register(0x00BBD4, mp_00BBD4);
     func_table_register(0x00BBD8, mp_00BBD8);
     func_table_register(0x00C7DB, mp_00C7DB);
     func_table_register(0x00B98C, mp_00B98C);
@@ -3899,6 +3945,7 @@ void mp_register_misc(void) {
     func_table_register(0x01DB25, mp_01DB25);
     func_table_register(0x00E2A3, mp_00E2A3);
     func_table_register(0x00DA49, mp_00DA49);
+    func_table_register(0x00DA7B, mp_00DA7B);
     func_table_register(0x009F87, mp_009F87);
     func_table_register(0x00EF6E, mp_00EF6E);
 

@@ -169,6 +169,7 @@ void mp_01D597(void);  /* Pen tile transform (BG) */
 void mp_register_draw(void);
 void mp_00AAEF(void);  /* Pixel plot entry */
 void mp_00B051(void);  /* Core pixel plotting */
+void mp_00B05A(void);  /* Pen dab without the masked test */
 void mp_009D7D(void);  /* Draw stroke sound */
 void mp_00B305(void);  /* Canvas tile offset compute */
 void mp_00B3FF(void);  /* Flood fill */
@@ -227,6 +228,17 @@ void mp_009C1B(void);  /* Draw completion */
 void mp_00A0EB(void);  /* Tool init dispatch */
 void mp_0082D5(void);  /* Reset delay */
 void mp_018D35(void);  /* Title logo click */
+void mp_018D99(void);
+void mp_018DAE(void);
+void mp_018DC3(void);
+void mp_018DD8(void);
+void mp_018DFA(void);
+void mp_018E0F(void);
+void mp_018E8E(void);
+void mp_018EA3(void);
+void mp_018EC0(void);
+void mp_018F04(void);
+void mp_0096CD(void);
 void mp_00DF2C(void);  /* Palette entry read */
 void mp_00DFC4(void);  /* Palette entry process */
 

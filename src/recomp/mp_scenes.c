@@ -228,7 +228,11 @@ void mp_018000(void) {
     bus_write16(0x00, 0x0220, 0xFFFF);
     g_cpu.DB = pop8();
     if (R16(0x04E2) != 0) { cpu_set_p(pop8()); return; }
-    if (R16(0x0565) != 0) { cpu_set_p(pop8()); tail_jmp(0x019372); return; }
+    if (R16(0x0565) != 0) {                      /* JMP $9372: it never returns */
+        cpu_set_p(pop8());
+        func_table_call(0x019372);
+        return;
+    }
     g_cpu.flag_M = true;
     blank_screen();
     dma_cgram(0x02FC00);

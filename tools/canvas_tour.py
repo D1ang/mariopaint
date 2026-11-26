@@ -61,6 +61,15 @@ SCENARIOS = {
     # title states of $01:8308); a while to watch each, then Mario.
     "title": ["notitle"] + [pt for x in (62, 86, 107, 118, 130, 144, 163, 174, 190, 203)
                             for pt in ((x, 72), ("wait", 240))] + [(128, 168)],
+    # The logo letters "title" does not get to (a scene that waits for a
+    # click blocks the next letter): each one clicked with the title back in
+    # state 1, with a click on its scene's way out where it has one.
+    "letters": ["notitle", (96, 72), ("wait", 300), (128, 120), ("wait", 600),
+                (108, 72), ("wait", 300),
+                (152, 72), ("wait", 300), (128, 128), ("wait", 600),
+                (164, 72), ("wait", 300), (164, 72), ("wait", 200),
+                (176, 72), ("wait", 600), (176, 72), ("wait", 300),
+                (192, 72), ("wait", 60), ("drag", 60, 100, 160, 140), (192, 72), ("wait", 200)],
     # The special start: B+Select+A held on controller 2 at the title
     # ($01:8CBF sets $0565 = 1), with a saved game: the saved animation
     # plays as an attract loop ($01:9372).
@@ -137,6 +146,12 @@ SCENARIOS = {
               ("drag", 160, 140, 60, 140), ("drag", 60, 140, 60, 60)] +
              [pt for x, y in ((110, 100), (40, 40), (110, 100), (180, 150), (60, 60), (100, 180))
               for pt in (("poke", "7E04D0=05"), (x, y), ("wait", 300))],
+    # A small square and one fill left alone long enough to finish: a click
+    # while the fill runs stops it ($1A0C), and a call cut short that way
+    # cannot be compared.
+    "fill3": [(62, 212), ("drag", 90, 80, 120, 80), ("drag", 120, 80, 120, 104),
+              ("drag", 120, 104, 90, 104), ("drag", 90, 104, 90, 80), ("poke", "7E04D0=05"),
+              (105, 92), ("wait", 2400)],
     # The shapes from the size panel (bottom bar 128-143, then slot n: $AE =
     # (n-1)/4+1): ellipse ($AB8A), rectangle ($AB26), line ($AAFB).
     "shapes": [(135, 212), (168, 212), ("drag", 80, 70, 150, 130), ("wait", 100),

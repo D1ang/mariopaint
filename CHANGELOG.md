@@ -43,6 +43,15 @@ versions follow SemVer once the first one is tagged.
 - Root screenshots moved to `docs/screenshots/`.
 
 ### Fixed
+- Title screen: `$01:833F`, the letter click test `$01:8D35` and the ten letter
+  handlers retranslated from the ROM (the old guesses presented a frame
+  themselves); `$01:88E3` loads A before `$8B6E`.
+- Pen dab `$00:B05A` retranslated; `$00:96CD`, `$00:BBD4` and `$00:DA7B` added.
+- `$01:8000` passes conformance but stays on the ROM: native, the title screen
+  now and then shows a frame without its picture (`NOT_TIMED`).
+- conformance.py no longer skips checks silently: snesrecomp's limits on
+  routines and nesting depth raised, RTL routines entered by jump get the right
+  return size, and a soft reset no longer fails the call it cut short.
 - The mingw-w64 build failed to link (`undefined reference to SDL_main`):
   `main.c` now includes `<SDL.h>`.
 - APU command-queue pushes (`$01:D308/D328/D348/D368`, `$01:D2BF`) returned in

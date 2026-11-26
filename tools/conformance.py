@@ -48,7 +48,7 @@ BASELINE = os.path.join(HERE, "conformance_baseline.txt")
 # Frame drivers: their native bodies present a frame (begin/end_frame), which
 # is how the native-driven build paces itself, not a translation of the ROM
 # routine. Run natively they would advance the capture clock mid-check.
-FRAME_DRIVERS = {"018260", "01E2CE", "01E794", "01E7C9"}
+FRAME_DRIVERS = {"01E2CE", "01E794", "01E7C9"}
 
 # Routines entered by JMP (abs,x) or $01:E393 from a jump table, never by JSR/JSL, so the
 # profile never lists them. They return through their dispatcher's caller's
@@ -64,8 +64,11 @@ FRAME_DRIVERS = {"018260", "01E2CE", "01E794", "01E7C9"}
 # state, different timing, so they never run as timed intercepts.
 TIMING_SENSITIVE = set()
 # Pass under check but break the timed loop when run natively (so not in
-# k_verified; tools/timed_smoke.py finds such breakage). None at present.
-NOT_TIMED = set()
+# k_verified; tools/timed_smoke.py finds such breakage).
+# $01:8000: with the whole title routine native, the title screen now and then
+# shows a frame without its picture (letters scenario, after the click at
+# (164,72); $8260 and $8308 native under the ROM's $8000 do not).
+NOT_TIMED = {"018000"}
 
 JUMP_ENTERED = ["008BEB", "009564", "009598", "0095E7",
                 "009760", "009853", "00987B", "0098C3", "0098F8", "009C25", "009DAB", "009DFB",
@@ -98,6 +101,15 @@ JUMP_ENTERED += BOSS_PHASES + BOSS_STEPS
 # freehand), the masked single-pixel draw ($B051), the window tables
 # ($01:D3BA).
 JUMP_ENTERED += ["00AAEF", "00B32D", "00E64B", "009CC7"]
+# Title state 1, its click test (JMP) and the letters' handlers (JMP
+# ($8D71,X)).
+JUMP_ENTERED += ["01833F", "018D35", "018D99", "018DAE", "018DC3", "018DD8", "018DFA", "018E0F",
+                 "018E8E", "018EA3", "018EC0", "018F04"]
+# Of the routines named here, those that return with RTL: the profile does
+# not list them, so their return size has to be given.
+LONG_ENTERED = {"00E64B", "0096CD", "00B046"}
+# The title letters' own callees, so the handlers-alone scenarios check them.
+JUMP_ENTERED_CALLEES = ["0096CD", "00B046", "00B05A", "00DA7B", "018B6E", "018BB5", "018C19"]
 # Called once at boot, before the profiler's window ($84D5, $01:8328) or
 # at the soft reset ($82D5), or through the tool table ($94E5, the empty
 # slot): checked wherever a scenario reaches them.
@@ -106,6 +118,7 @@ JUMP_ENTERED += ["0084D5", "018328", "0082D5", "0094E5"]
 # sound test's row handler (JMP ($C941,X)).
 JUMP_ENTERED += ["00C900", "00D505", "00D03E", "00D2F6", "00C94B", "00CF9B", "00EC88", "00E4B9", "00CC10",
                  "00E27C", "00DE67", "00E388"]
+JUMP_ENTERED += JUMP_ENTERED_CALLEES
 
 # Scenarios checked without the routines listed (see check_scenario).
 GNAT_LOOP = {"01A505", "01A5F3", "01A60E", "01C012", "01AF14", "01AFDB", "01C3C4",
@@ -139,7 +152,8 @@ INNER = {"gnatinner": GNAT_LOOP, "gnatinner2": GNAT_LOOP, "gnatinner3": GNAT_LOO
 # Scenarios checked with the jump-entered handlers alone (see check_scenario).
 HANDLERS_ALONE = {"bars", "bars2", "bars3", "titlestates",
                   "modes", "modes2", "modes3", "modes4", "modes5", "modes6", "modes7", "patbar", "musicbar",
-                  "stampfx", "stampfx2", "stampfx3", "stampfx4", "stampfx5", "stampfx6", "stampfx7", "stampfx8", "stampfx9", "musicexit"}
+                  "stampfx", "stampfx2", "stampfx3", "stampfx4", "stampfx5", "stampfx6", "stampfx7", "stampfx8", "stampfx9", "musicexit",
+                  "letters"}
 DISPATCHERS = {"008BEB", "009564", "009598", "0095E7", "018308"}
 
 
@@ -155,7 +169,7 @@ def check_scenario(rom, name):
     prof = re.findall(r"^PROF (\w{6}) +\d+ +\w\w (JSR|JSL) .*recompiled", r.stderr, re.M)
     executed = set(re.findall(r"^PROF (\w{6}) ", r.stderr, re.M))
     spec = ",".join([a + ("L" if k == "JSL" else "") for a, k in prof if a not in FRAME_DRIVERS] +
-                    [a for a in JUMP_ENTERED if a not in dict(prof)])
+                    [a + ("L" if a in LONG_ENTERED else "") for a in JUMP_ENTERED if a not in dict(prof)])
     if name in INNER:
         # The routines inside a loop that is now checked whole: without the
         # loop (and its phases) under check, each is checked on its own.
@@ -163,7 +177,7 @@ def check_scenario(rom, name):
     if name in HANDLERS_ALONE:
         # Only the jump-entered handlers: with their dispatcher also under
         # check, a handler runs inside its call and is never checked itself.
-        spec = ",".join(a for a in JUMP_ENTERED if a not in DISPATCHERS)
+        spec = ",".join(a + ("L" if a in LONG_ENTERED else "") for a in JUMP_ENTERED if a not in DISPATCHERS)
     checked = os.path.join(OUT, name, "validated")
     r = canvas_tour.run(rom, pts, checked, real=True, extra_env={"MP_VALIDATE": spec,
                                                                  "SNESRECOMP_VALIDATE_MAX": "3000"})
@@ -212,7 +226,8 @@ def main():
             passed += ok
             if ok and addr not in TIMING_SENSITIVE and addr not in NOT_TIMED:
                 # F: it waits for frames, so it runs as a framed intercept.
-                verified.append(addr + ("L" if kind.get(addr) == "JSL" else "") + ("F" if frames else ""))
+                long_ret = kind.get(addr) == "JSL" or addr in LONG_ENTERED
+                verified.append(addr + ("L" if long_ret else "") + ("F" if frames else ""))
             f.write(f"{addr} {'PASS' if ok else 'FAIL'} calls={calls} mem_fail={mem} reg_fail={reg} mx_fail={mx} "
                     f"skipped={skip} irq={irq} frames={frames} irqdep={irqdep}{first}\n")
     rows = total

@@ -34,6 +34,55 @@ void mp_00AAEF(void) {
 }
 
 /* ========================================================================
+ * $00:B05A — the 16x16 pen dab at ($86, $88): $B051 without the masked
+ * draw test; the title's drawing state enters here through $00:B046.
+ * PHX/PHY/PHP around it, the tile offset $84 kept on the stack across the
+ * two tile halves (Y = 0..$E, then $400..$40E, into $B0D3).
+ * ======================================================================== */
+void mp_00B05A(void) {
+#define Z(o)     bus_read16(0x00, (uint16_t)(g_cpu.DP + (o)))
+#define ZW(o, v) bus_write16(0x00, (uint16_t)(g_cpu.DP + (o)), (uint16_t)(v))
+#define R(o)     bus_read16(g_cpu.DB, (uint16_t)(o))
+    uint8_t p = cpu_get_p();
+    uint16_t x0 = g_cpu.X, y0 = g_cpu.Y;
+    if (Z(0xB8) != 0 && R(0x04D0) != 0x0007)
+        call_jsr(0x00B7D6);                                 /* spray can */
+    uint16_t x = (uint16_t)(Z(0x86) - 8);
+    ZW(0x86, x);
+    ZW(0x80, x);
+    uint16_t y = Z(0x88);
+    if (x & 0x8000) y = (uint16_t)(y - 8);                  /* PHP/PLP: N of x - 8 */
+    ZW(0x82, y - 8);
+    ZW(0x88, Z(0x88) - 8);
+    call_jsr(0x00B305);
+    uint16_t saved = Z(0x84);
+    uint16_t row = 0;
+    for (;;) {
+        uint16_t cy = Z(0x88);
+        if (!((uint16_t)(cy - R(0x19B2)) & 0x8000) && ((uint16_t)(cy - R(0x19B4)) & 0x8000)) {
+            g_cpu.Y = row;
+            call_jsr(0x00B0D3);
+        }
+        ZW(0x88, Z(0x88) + 1);
+        row = (uint16_t)(row + 2);
+        uint16_t a = (uint16_t)(row + Z(0x84));
+        CPU_SET_A16((uint16_t)(a & 0x000F));
+        if (!(a & 0x000F)) ZW(0x84, Z(0x84) + 0x03F0);
+        if (row == 0x0410) break;
+        if (row == 0x0010) {
+            row = 0x0400;
+            ZW(0x84, saved);
+        }
+    }
+    CPU_SET_A16(saved);                                     /* PLA */
+    g_cpu.X = x0; g_cpu.Y = y0;
+    cpu_set_p(p);
+#undef Z
+#undef ZW
+#undef R
+}
+
+/* ========================================================================
  * $00:B051 — Core pixel plotting routine
  *
  * Plots pixels into the canvas buffer based on the current pen
@@ -55,69 +104,7 @@ void mp_00B051(void) {
         return;
     }
 
-    /* Check spray can mode */
-    uint16_t spray = bus_wram_read16(0x00B8);
-    if (spray != 0) {
-        uint16_t tool = bus_wram_read16(0x04D0);
-        if (tool != 0x0007) {
-            func_table_call(0x00B7D6);  /* Spray can effect */
-        }
-    }
-
-    /* Adjust coordinates:
-     * ASM: x86 -= 8, x80 = x86
-     * If x was < 8 (borrow): y82 = y88 - 16, else y82 = y88 - 8
-     * y88 -= 8 always */
-    uint16_t raw_x = bus_wram_read16(0x0086);
-    uint16_t adj_x = raw_x - 8;
-    bus_wram_write16(0x0086, adj_x);
-    bus_wram_write16(0x0080, adj_x);
-
-    uint16_t raw_y = bus_wram_read16(0x0088);
-    uint16_t adj_y82;
-    if (raw_x < 8) {
-        adj_y82 = raw_y - 16;  /* Extra -8 when x borrows */
-    } else {
-        adj_y82 = raw_y - 8;
-    }
-    bus_wram_write16(0x0082, adj_y82);
-    bus_wram_write16(0x0088, raw_y - 8);
-
-    /* Compute tile buffer offset from coordinates */
-    func_table_call(0x00B305);
-
-    uint16_t saved_offset = bus_wram_read16(0x0084);
-
-    /* Iterate rows: Y = 0,2,...,E (first tile), then 0x400,...,0x40E (second tile).
-     * Y is passed to B0D3 via g_cpu.Y as the pen tile row offset. */
-    uint16_t y_reg = 0x0000;
-    for (;;) {
-        int16_t cur_y = (int16_t)bus_wram_read16(0x0088);
-
-        if (cur_y >= (int16_t)bus_wram_read16(0x19B2) &&
-            cur_y < (int16_t)bus_wram_read16(0x19B4)) {
-            g_cpu.Y = y_reg;
-            func_table_call(0x00B0D3);
-        }
-
-        bus_wram_write16(0x0088, bus_wram_read16(0x0088) + 1);
-        y_reg += 2;
-
-        /* Check if row crosses tile boundary → advance tile offset by $3F0 */
-        uint16_t ofs = bus_wram_read16(0x0084);
-        if (((y_reg + ofs) & 0x000F) == 0) {
-            bus_wram_write16(0x0084, ofs + 0x03F0);
-        }
-
-        /* After 8 rows of first tile (Y=$10): switch to second tile half */
-        if (y_reg == 0x0010) {
-            y_reg = 0x0400;
-            bus_wram_write16(0x0084, saved_offset);
-        }
-
-        /* After 8 rows of second tile (Y=$410): done */
-        if (y_reg == 0x0410) break;
-    }
+    mp_00B05A();                                            /* falls through */
 }
 
 /* ========================================================================
@@ -453,6 +440,7 @@ void mp_008B3C(void) {
 void mp_register_draw(void) {
     func_table_register(0x00AAEF, mp_00AAEF);
     func_table_register(0x00B051, mp_00B051);
+    func_table_register(0x00B05A, mp_00B05A);
     func_table_register(0x009D7D, mp_009D7D);
     func_table_register(0x00B305, mp_00B305);
     func_table_register(0x00B3FF, mp_00B3FF);

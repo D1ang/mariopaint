@@ -802,27 +802,6 @@ void mp_0082D5(void) {
 }
 
 /* ========================================================================
- * $01:8D35 — Title screen: check for logo click
- *
- * Checks if the user clicked in the toolbar area during
- * title screen state 1.
- * ======================================================================== */
-void mp_018D35(void) {
-    uint16_t buttons = bus_wram_read16(0x04CA);
-    if (!(buttons & 0x0020)) {
-        mp_01E2CE();
-        return;
-    }
-
-    /* Check click Y range */
-    uint16_t cy = bus_wram_read16(0x04DE);
-    if (cy < 0x0040 || cy >= 0x0050) return;
-
-    /* Click is in toolbar area — advance state */
-    func_table_call(0x018D4D);
-}
-
-/* ========================================================================
  * Register all shape and remaining functions.
  * ======================================================================== */
 void mp_register_shapes(void) {
@@ -841,5 +820,4 @@ void mp_register_shapes(void) {
     func_table_register(0x009C1B, mp_009C1B);
     func_table_register(0x00A0EB, mp_00A0EB);
     func_table_register(0x0082D5, mp_0082D5);
-    func_table_register(0x018D35, mp_018D35);
 }

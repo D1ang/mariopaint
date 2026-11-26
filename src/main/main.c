@@ -51,7 +51,7 @@ bool g_quit = false;
  * and paste; never add a function here that has not passed.
  */
 static const char k_verified[] =
-    "00815B,008187,0081CA,00823C,00833B,00837D,00849D,0084AF,008683L,"
+    "00815B,008187,0081CA,00823C,00833B,00837D,00849D,0084AF,008683LF,"
     "00878F,0087EE,008994LF,0089B1,0089C3,008A12L,008A16,008A39,"
     "008A75L,008A8ALF,008A8EF,008AC2,008AFFL,008B03,008B14L,008B18,"
     "008B29,008B3CL,008B44L,008B48,008D2C,008E0B,009001,009082,009107,"
@@ -81,7 +81,7 @@ static const char k_verified[] =
     "01B5F4,01B60F,01B698,01B925,01BAD1,01BB1A,01BBBE,01BC57,01BC7B,"
     "01BD01,01BD87,01BDE6,01BE40,01BF29,01BF99,01C012F,01C0D3F,01C3C4,"
     "01C51D,01C5F8F,01C622F,01C95EF,01C9CE,01C9EF,01CA98,01CAAE,01CB10,"
-    "01CD86,01CDE1LF,01CFD5L,01D08D,01D0AD,01D13B,01D1A1,01D1E6,01D22B,"
+    "01CD86,01CDE1LF,01CFD5LF,01D08D,01D0AD,01D13B,01D1A1,01D1E6,01D22B,"
     "01D242,01D259,01D279,01D287,01D2BFL,01D308L,01D328L,01D348L,"
     "01D368L,01D388LF,01D3ABL,01D3BALF,01D409F,01D56DL,01D597L,01D75BL,"
     "01D7F0,01D810L,01D874,01D8CE,01D9A9,01D9E1L,01DA0D,01DA68,01DA73,"
@@ -107,7 +107,7 @@ static const char k_verified[] =
     /* small helpers the tour runs on the ROM (fill2, demo, copy, modes) */
     "00B610,00B637,0FC118,009F87,00E2A3,"
     /* the special start's attract loop (specialstart) */
-    "00B988L,00B98C,00C7AFL,00C7DBF,00BBD8,"
+    "00B988L,00B98C,00C7AFL,00C7DBF,00BBD8F,"
     /* main states (table $87B0): the sound test, two waits, state $0B */
     "00C900,00C94B,00D03EF,00D2F6F,00D505F,00CF9BF,"
     /* the music editor's scroll bar (musicscroll) */
@@ -117,7 +117,14 @@ static const char k_verified[] =
     /* state $02: its size buttons (bars3b) */
     "00CDCCF,00CC10F,00CB2EF,00CC5BF,00CCE1,"
     /* state $15's undo button and its helpers (modesundo) */
-    "00E27CF,00E2B1F,00E176,00DE67";
+    "00E27CF,00E2B1F,00E176,00DE67,"
+    /* the title screen's letters, the pen dab, the special start's step,
+     * the check chain $DA49/$DA7B (letters, fill3, modesundo, special*) */
+    "0096CDL,009DABF,00B046L,00B05A,00B3FF,00BBD4LF,00DA49,00DA7B,"
+    "00E19B,00E64BLF,018260F,018308F,01833FF,0184E2,018521,"
+    "0187F9,01885FF,0188E3F,018AAFF,018B6E,018BB5,018C19,018D35F,"
+    "018D99,018DAE,018DC3,018DD8,018DFA,018E0FF,018E8E,018EA3,018EC0,"
+    "018F04,01E393L,01EF36L,01F21DL,01F9BBL";
 
 /* Routines that present a frame: $01:E2CE waits for the NMI; $01:E794 and
  * $01:E7C9 fade the screen in/out over several frames. */

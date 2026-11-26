@@ -33,14 +33,6 @@ void mp_018328(void) {
     bus_write16(0x7F, 0x0001, state + 1);
 }
 
-/* State 1: Animate logo + check for click */
-void mp_01833F(void) {
-    CPU_SET_A16(0xFFFF);
-    mp_018C43();
-    mp_018CB7();
-    func_table_call(0x018D35);  /* Check for title click */
-}
-
 /* State 2+: Complex animation — dispatch via func_table_call */
 
 /* mp_0191FE and mp_01934F are in mp_misc.c */
@@ -59,5 +51,4 @@ void mp_register_interact(void) {
     func_table_register(0x008D2C, mp_008D2C);
     func_table_register(0x008E0B, mp_008E0B);
     func_table_register(0x018328, mp_018328);
-    func_table_register(0x01833F, mp_01833F);
 }
