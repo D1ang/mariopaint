@@ -3762,7 +3762,110 @@ static void mp_00CC10(void) {
     tail_jmp(0x009760);
 }
 
+/* ---- State $15, the pattern editor: its grid and buttons. ---- */
+
+static void push_word(uint16_t v) {
+    g_cpu.S = (uint16_t)(g_cpu.S - 2);
+    bus_wram_write16((uint16_t)(g_cpu.S + 1), v);
+}
+
+/* $00:E176: the 16x16 pattern grid's colours ($E19B per cell) into the
+ * map at $7E:298C (16 cells a row, rows $40 bytes apart). */
+static void mp_00E176(void) {
+    uint16_t x = 0;
+    for (uint16_t y = 0; y != 0x0100; y++) {
+        g_cpu.Y = y;
+        mp_00E19B();
+        bus_write16(0x7E, (uint16_t)(0x298C + x), CPU_A16());
+        if ((y & 0x000F) == 0x000F) x = (uint16_t)(x + 0x20);
+        x = (uint16_t)(x + 2);
+    }
+    g_cpu.X = x; g_cpu.Y = 0x0100;
+}
+
+/* $00:DE67: queue the VRAM job at $00:DE7B (10 words into $0182) and mark
+ * the list ready ($0202). */
+static void mp_00DE67(void) {
+    uint8_t db = g_cpu.DB;
+    bus_write16(db, 0x0202, 0);
+    for (int x = 0x12; x >= 0; x -= 2)
+        bus_write16(db, (uint16_t)(0x0182 + x), bus_read16(db, (uint16_t)(0xDE7B + x)));
+    g_cpu.X = 0xFFFE;
+    bus_write16(db, 0x0202, bus_read16(db, 0x0202) + 1);
+}
+
+/* $00:E2B1: the pattern back from its copy ($109C into $101C), the grid
+ * map ($E176), uploaded ($01:DEB2), a frame, the VRAM job ($DE67). */
+static void mp_00E2B1(void) {
+    uint8_t db = g_cpu.DB;
+    for (int x = 0x7E; x >= 0; x -= 2)
+        bus_write16(db, (uint16_t)(0x101C + x), bus_read16(db, (uint16_t)(0x109C + x)));
+    mp_00E176();
+    call_jsl(0x01DEB2);
+    call_jsl(0x01E2CE);
+    mp_00DE67();
+}
+
+/* $00:E3D6: one tile row of the pattern filled from its first pixel's
+ * bits ($C0C0 spread over the row), into the four copies at $101C + X. */
+static void mp_00E3D6(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t x = g_cpu.X;
+    uint16_t a = (uint16_t)(bus_read16(db, (uint16_t)(0x101C + x)) & 0xC0C0);
+    uint16_t v = a;
+    for (int k = 0; k < 3; k++) v = (uint16_t)((v >> 2) | a);
+    for (int k = 0; k < 4; k++) bus_write16(db, (uint16_t)(0x101C + 0x20 * k + x), v);
+    CPU_SET_A16(a);
+}
+
+/* $00:E388: state $15's fill button: the pattern kept ($E2A3), the first
+ * pixel of four rows spread ($E3D6), the first quarter copied over the
+ * rest, the grid map, uploaded, a frame, the VRAM job. */
+static void mp_00E388(void) {
+    uint8_t db = g_cpu.DB;
+    call_jsr(0x00E2A3);
+    static const uint16_t rows[4] = { 0x0000, 0x0002, 0x0010, 0x0012 };
+    for (int k = 0; k < 4; k++) { g_cpu.X = rows[k]; mp_00E3D6(); }
+    uint16_t x = 0;
+    do {
+        bus_write16(db, (uint16_t)(0x1020 + x), bus_read16(db, (uint16_t)(0x101C + x)));
+        bus_write16(db, (uint16_t)(0x1030 + x), bus_read16(db, (uint16_t)(0x102C + x)));
+        x = (uint16_t)(x + 2);
+        if ((x & 0x000F) == 0x000C) x = (uint16_t)(x + 0x14);
+    } while (x != 0x0080);
+    g_cpu.X = x;
+    mp_00E176();
+    call_jsl(0x01DEB2);
+    call_jsl(0x01E2CE);
+    mp_00DE67();
+}
+
+/* $00:E27C: state $15's undo button: sound 9, a tool switch ($9FC4 with 0,
+ * DP $AA and 1 on the stack), the pattern back ($E2B1), a frame, and the
+ * tool switched back ($9FC4 with DP $AA and 0). */
+static void mp_00E27C(void) {
+    uint16_t dp = g_cpu.DP;
+    CPU_SET_A16(0x0009); call_jsl(0x01D368);
+    push_word(0x0000);
+    push_word(bus_read16(0x00, (uint16_t)(dp + 0xAA)));
+    push_word(0x0001);
+    CPU_SET_A16(0x0001);
+    call_jsr(0x009FC4);
+    mp_00E2B1();
+    call_jsl(0x01E2CE);
+    push_word(bus_read16(0x00, (uint16_t)(dp + 0xAA)));
+    push_word(0x0000);
+    CPU_SET_A16(0x0000);
+    call_jsr(0x009FC4);
+}
+
 void mp_register_misc(void) {
+    func_table_register(0x00E176, mp_00E176);
+    func_table_register(0x00DE67, mp_00DE67);
+    func_table_register(0x00E2B1, mp_00E2B1);
+    func_table_register(0x00E3D6, mp_00E3D6);
+    func_table_register(0x00E388, mp_00E388);
+    func_table_register(0x00E27C, mp_00E27C);
     func_table_register(0x00CC10, mp_00CC10);
     func_table_register(0x00CB2E, mp_00CB2E);
     func_table_register(0x00CCE1, mp_00CCE1);

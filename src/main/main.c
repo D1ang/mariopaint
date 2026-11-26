@@ -115,7 +115,9 @@ static const char k_verified[] =
     /* state $1D: its rows and exit (modes4, modes4b) */
     "00E4B9F,"
     /* state $02: its size buttons (bars3b) */
-    "00CDCCF,00CC10F,00CB2EF,00CC5BF,00CCE1";
+    "00CDCCF,00CC10F,00CB2EF,00CC5BF,00CCE1,"
+    /* state $15's undo button and its helpers (modesundo) */
+    "00E27CF,00E2B1F,00E176,00DE67";
 
 /* Routines that present a frame: $01:E2CE waits for the NMI; $01:E794 and
  * $01:E7C9 fade the screen in/out over several frames. */

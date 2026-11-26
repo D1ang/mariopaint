@@ -166,6 +166,10 @@ SCENARIOS = {
               [("wait", 200), (12, 210), ("wait", 200), (100, 100), ("wait", 60)],
     # The mode bar's buttons, each from the canvas, checked alone (as bars).
     "modes": [MODE_BAR, (55, 212), ("wait", 300), (128, 112)],
+    # State $15 (the pattern editor, $D8F1): drawing on its grid, then its
+    # undo button (x $D8-$E6 in the bottom bar: $E27C -> $E2B1, $E176, $DE67).
+    "modesundo": [MODE_BAR, (55, 212), ("wait", 300), ("drag", 60, 60, 140, 140), ("wait", 60), (222, 210),
+                  ("wait", 200), (100, 100), ("wait", 60)],
     "modes2": [MODE_BAR, (102, 212), ("wait", 200), (128, 112)],
     "modes3": [MODE_BAR, (129, 212), ("wait", 200), (128, 112)],
     "modes4": [MODE_BAR, (150, 212), ("wait", 200), (128, 112)],
