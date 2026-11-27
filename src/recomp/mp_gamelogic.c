@@ -293,7 +293,9 @@ void mp_0087A8(void) {
     };
 
     if (state < 31) {
-        func_table_call(dispatch_table[state]);
+        CPU_SET_A16((uint16_t)(state << 1));       /* ASL; TAX; JMP (tbl,X) */
+        g_cpu.X = (uint16_t)(state << 1);
+        tail_jmp(dispatch_table[state]);
     }
 }
 

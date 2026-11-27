@@ -1029,6 +1029,7 @@ void mp_register_all(void) {
 
     /* Miscellaneous */
     mp_register_misc();
+    mp_register_states();
 
     /* Shapes / remaining */
     mp_register_shapes();

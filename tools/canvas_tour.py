@@ -75,8 +75,6 @@ SCENARIOS = {
     # plays as an attract loop ($01:9372).
     "specialstart": ["sram", "notitle", ("pad2", "A080", 120), ("wait", 290)] + [("wait", 300)] * 5,
     # The attract loop's bottom buttons: the song on and off (x $40-$4E).
-    # $BBD8 hands a click to the ROM ($BCDB), so this one is checked with
-    # $BBD8 left out (conformance.py INNER).
     "specialclick": ["sram", "notitle", ("pad2", "A080", 120), ("wait", 290), (70, 210), ("wait", 300),
                      (70, 210), ("wait", 300), ("wait", 300)],
     # The music editor's scroll bar (y $A8-$BB, x $68-$A7): the arrows,
@@ -214,6 +212,48 @@ SCENARIOS = {
     "stampfx7": [(192, 212), (208, 8), ("wait", 100)],
     "stampfx8": [(192, 212), (224, 8), ("wait", 300)],
     "stampfx9": [(192, 212), (128, 8), ("wait", 900)],
+    # Animation Land's path screen (state $04): a path recorded (the box on
+    # the right: points while the button is held, still too, cleared once by
+    # the top button, drawn again) and left by the exit; the new path picked
+    # below and played; the screen entered again and left by its exit.
+    "animpath": [MODE_BAR, (80, 212), ("wait", 60), (216, 80), ("wait", 200), ("drag", 40, 60, 200, 160),
+                 ("drag", 100, 100, 100, 100), (220, 12), ("wait", 200), ("drag", 30, 40, 220, 180),
+                 ("drag", 220, 180, 60, 120), ("drag", 60, 120, 250, 40), (12, 210), ("wait", 400),
+                 (40, 170), ("wait", 300), (12, 210), ("wait", 300), (12, 210), ("wait", 200),
+                 (128, 112)],
+    # A path recorded and played, with the player's clicks: speeds (top bar),
+    # full screen and back, the song on and off, the exit.
+    "animplay": [MODE_BAR, (80, 212), ("wait", 60), (216, 80), ("wait", 200), ("drag", 40, 60, 200, 160),
+                 (12, 210), ("wait", 400), (40, 170), ("wait", 300), (80, 10), ("wait", 60), (200, 10),
+                 (46, 210), ("wait", 200), (128, 112), ("wait", 100), (70, 210), ("wait", 200), (70, 210),
+                 ("wait", 100), (12, 210), ("wait", 300)],
+    # The same with a path started near its end (the room left poked), so it
+    # runs full, then a speed picked ($C626 with a path).
+    "animfull": [MODE_BAR, (80, 212), ("wait", 60), (216, 80), ("wait", 200), ("poke", "7E19EB=07"),
+                 ("poke", "7E19EA=A0"), ("drag", 40, 60, 200, 160), ("drag", 200, 160, 40, 100),
+                 ("drag", 40, 100, 220, 60), (12, 210), ("wait", 400), (80, 88), ("wait", 100),
+                 (128, 112)],
+    # The pattern editor (state $15): a colour from the top, a stroke on the
+    # grid, undo, then with $099F set the right button on the grid and the
+    # fill button; the exit.
+    "pattern": [MODE_BAR, (55, 212), ("wait", 300), (60, 8), ("drag", 60, 60, 140, 140), (120, 8),
+                ("drag", 150, 60, 60, 150), (222, 210), ("wait", 100), ("poke", "7E099F=01"),
+                (100, 100, "R"), ("wait", 60), (215, 210), (212, 210), (180, 210), ("wait", 100),
+                (12, 210), ("wait", 300), (100, 100), ("wait", 60)],
+    # Its side buttons, each leaving the editor for another state.
+    "pattern2": [MODE_BAR, (55, 212), ("wait", 300), (20, 145), ("wait", 300), (128, 112)],
+    # Save: a stroke, a slot picked, the screen closed by a click below.
+    "pattern3": [MODE_BAR, (55, 212), ("wait", 300), ("drag", 60, 60, 140, 140), ("jump", 216, 92, 92, 8),
+                 (92, 8), (128, 112), ("wait", 200)],
+    # Save, clear, then load: the page arrows (either button), a slot picked.
+    "pattern4": [MODE_BAR, (55, 212), ("wait", 300), ("drag", 60, 60, 140, 140), ("jump", 216, 92, 92, 8),
+                 (92, 8), (128, 112), ("wait", 100), (20, 145), ("wait", 300), ("jump", 216, 162, 92, 8),
+                 (240, 8), (240, 8, "R"), (8, 8), (8, 8, "R"), (92, 8), (92, 8), (128, 112),
+                 ("wait", 200)],
+    # Saving and loading left by their exit buttons before they start.
+    "saveleave": ["sram", MODE_BAR, (129, 212), (138, 82), ("wait", 200), (12, 210), ("wait", 300),
+                  MODE_BAR, (129, 212), (138, 123), ("wait", 200), (12, 210), ("wait", 300),
+                  (100, 100), ("wait", 60)],
     # The wave again with its callers left out, for the routines in it.
     "waveinner": None,
     "waveinner2": None,
@@ -312,7 +352,12 @@ def run(rom, points, out, real=False, extra_env=None, title=True):
             f += pt[1]
             shots.append(f - 5)
             continue
-        if pt[0] == "drag":                      # ("drag", x1, y1, x2, y2): a held stroke
+        if pt[0] == "jump":                      # ("jump", x, y, tx, ty): click at x,y and
+            _, x, y, tx, ty = pt                 # be at tx,ty at once (a screen that closes
+            script.append(f"{f}:@{x}:@{y}:0:30")          # unless the pointer is in it)
+            script.append(f"{f + 30}:@{x}:@{y}:L:2")
+            script.append(f"{f + 32}:@{tx}:@{ty}:0:{STEP - 32}")
+        elif pt[0] == "drag":                    # ("drag", x1, y1, x2, y2): a held stroke
             _, x1, y1, x2, y2 = pt
             script.append(f"{f}:@{x1}:@{y1}:0:30")
             n = 12
@@ -356,7 +401,7 @@ def run(rom, points, out, real=False, extra_env=None, title=True):
     points = [p for p in points if p not in ("notitle", "sram") and p[0] not in ("poke", "pad2")]
     names = ["00_canvas"] + [
         (f"{i + 1:02d}_wait_{p[1]}" if p[0] == "wait" else
-         f"{i + 1:02d}_drag_{p[1]}_{p[2]}_{p[3]}_{p[4]}" if p[0] == "drag" else
+         "_".join(map(str, (f"{i + 1:02d}", *p))) if p[0] in ("drag", "jump") else
          f"{i + 1:02d}_{p[0]}_{p[1]}" + ("_" + p[2] if len(p) > 2 else ""))
         for i, p in enumerate(points)]
     for name, png, snap in zip(names, pngs, snaps):

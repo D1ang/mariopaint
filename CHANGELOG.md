@@ -43,6 +43,16 @@ versions follow SemVer once the first one is tagged.
 - Root screenshots moved to `docs/screenshots/`.
 
 ### Fixed
+- Frame waits in the timed loop: a framed native routine now really hands each
+  frame to the ROM's frame driver. Until now only conformance.py's check did
+  that; in the game the C frame driver presented the frame itself, at the wrong
+  moment, so sprites were now and then uploaded while the picture was being
+  drawn (snesrecomp: `func_table.c`). The resumed routine also returns in its
+  own bank, not the frame driver's.
+- Animation Land and the special stamp: the path screens (`$00:C460`,
+  `$00:C4D6` and what they lead to), the other main states of `$00:87A8`, the
+  stamp's save and load screens (`$00:DB59`-`$00:DD6D`, `$00:DEB3`) and the
+  playback's buttons (`$00:BCDB`) in C. New tour scenarios cover them.
 - Title screen: `$01:833F`, the letter click test `$01:8D35` and the ten letter
   handlers retranslated from the ROM (the old guesses presented a frame
   themselves); `$01:88E3` loads A before `$8B6E`.

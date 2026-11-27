@@ -119,6 +119,12 @@ JUMP_ENTERED += ["0084D5", "018328", "0082D5", "0094E5"]
 JUMP_ENTERED += ["00C900", "00D505", "00D03E", "00D2F6", "00C94B", "00CF9B", "00EC88", "00E4B9", "00CC10",
                  "00E27C", "00DE67", "00E388"]
 JUMP_ENTERED += JUMP_ENTERED_CALLEES
+# The other main states of $87A8 (save $D069, load $D321, $D50D, the path
+# screens $C460/$C4D6, the pattern editor $D8F1) and where they jump on to.
+JUMP_ENTERED += ["00C460", "00C4D6", "00C626", "00BAAB", "00BE43", "00BB6D", "00CE60", "00D069", "00D321",
+                 "00D50D", "00D8F1", "00DD97", "00E335",
+                 # the special stamp's save and load screens
+                 "00DB59", "00DB84", "00DBE4", "00DC29", "00DC8B", "00DCC5", "00DD31", "00DD6D"]
 
 # Scenarios checked without the routines listed (see check_scenario).
 GNAT_LOOP = {"01A505", "01A5F3", "01A60E", "01C012", "01AF14", "01AFDB", "01C3C4",
@@ -141,7 +147,6 @@ INNER = {"gnatinner": GNAT_LOOP, "gnatinner2": GNAT_LOOP, "gnatinner3": GNAT_LOO
          "shapesinner2": {"009C25"},
          "modesinner": {"00D869"},
          "copyinner": {"01D3BA"},
-         "specialclick": {"00BBD8"},
          "gnatbossinner": GNAT_LOOP - set(BOSS_PHASES),
          "gnatbossinner2": GNAT_LOOP | {"01B5F4", "01B60F"},
          # the rocket ($A9BE) with the clicks that lead to it

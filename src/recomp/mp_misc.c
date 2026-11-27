@@ -2985,6 +2985,43 @@ static void mp_00C7DB(void) {
     CPU_SET_A16((uint16_t)hi);
 }
 
+/* $00:BD54/$BE10: PLP and return. In full screen the return address is
+ * moved on by 3 first, past the caller's next instruction (the main loop's
+ * JSR $9378: no cursor). */
+static void play_end(uint16_t sp, uint8_t p0, bool full_screen) {
+    g_cpu.S = sp;                                                /* PLP */
+    cpu_set_p(p0);
+    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+    if (full_screen) {
+        uint16_t ret = (uint16_t)(bus_wram_read16((uint16_t)(sp + 1)) + 3);
+        bus_wram_write16((uint16_t)(sp + 1), ret);
+        CPU_SET_A16(ret);
+    } else {
+        CPU_SET_A16(0);                                          /* $1A06 */
+    }
+}
+
+/* $00:BD7C: the playback's exit button: the tool, the sound bank, and the
+ * path screen again ($BB6D). */
+static void path_leave(void) {
+    call_tool_switch(bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xAA)), 0, 0);
+    CPU_SET_A16(0x0020); call_jsl(0x009C1B);
+    CPU_SET_A16(0x000C); call_jsl(0x01D368);
+    op_sep(0x20);
+    call_jsl(0x01D39F);
+    call_jsl(0x01E30E);
+    bus_write8(0x00, (uint16_t)(g_cpu.DP + 0xCC), 0x00);
+    bus_write8(0x00, (uint16_t)(g_cpu.DP + 0xCD), 0x80);
+    bus_write8(0x00, (uint16_t)(g_cpu.DP + 0xCE), 0x1A);
+    CPU_SET_A8(0xFF);
+    bus_write8(g_cpu.DB, 0x2140, 0xFF);
+    call_jsl(0x01DF25);
+    op_rep(0x20);
+    call_jsl(0x01E2F3);
+    call_jsl(0x01D3AB);
+    tail_jmp(0x00BB6D);
+}
+
 /* $00:BBD8: one frame of the attract loop's animation playback. The
  * frame counter sprite and its blinking marker ($F91E), then the next
  * frame of the saved animation from the stream at $7E:3800 ($19EA
@@ -2992,8 +3029,8 @@ static void mp_00C7DB(void) {
  * $19F2 and a sign for x), drawn at its position by $01:F9BB; the frame
  * advance through the speed accumulator $1A00 += $1A02 (a carry, or speed
  * 0, steps $19FE, wrapping at the set's length $00:BE37); the saved song's
- * step ($C7DB) while it plays ($0EAC). A click goes on in the ROM ($BCDB:
- * the attract loop's buttons), with the PHP still on the stack. */
+ * step ($C7DB) while it plays ($0EAC). A click ($BCDB): a speed from the
+ * top bar; below, the exit, full screen, or the song on and off. */
 static void mp_00BBD8(void) {
     uint8_t db = g_cpu.DB;
     uint8_t p0 = cpu_get_p();
@@ -3057,21 +3094,72 @@ static void mp_00BBD8(void) {
         if (R16(0x19FE) == R16(0xBE37 + set2)) W16(0x19FE, 0);
     }
     if (R16(0x0EAC) != 0) call_jsr(0x00C7DB);
-    if (R16(0x04CA) & 0x0020) {
-        /* $BCDB: the buttons, in the ROM (S keeps the PHP). */
-        recomp_set_redirect(0x00BCDB);
-        return;
+
+    if (R16(0x04CA) & 0x0020) {                                  /* $BCDB */
+        if (R16(0x1A06) != 0) {                  /* a click: full screen off */
+            CPU_SET_A16(0x000E); call_jsl(0x01D368);
+            W16(0x1A06, 0);
+            bus_write8(db, 0x011A, 0x13);
+        } else {
+            uint16_t cy = R16(0x04DE), cx = R16(0x04DC);
+            if (cy < 0x0014 && cx >= 0x0038 && cx < 0x0100) {    /* speed */
+                uint16_t v = (uint16_t)(cx - 0x0038), n = 0;
+                while (v >= 0x000F) { v -= 0x000F; n++; }
+                if (n < 0x000D) {
+                    g_cpu.Y = n;
+                    W16(0x1A08, n);
+                    bus_write16(0x7E, 0x3FFE, n);
+                    g_cpu.X = (uint16_t)(n << 1);
+                    W16(0x1A02, R16(0xBE17 + g_cpu.X));
+                    CPU_SET_A16((uint16_t)(n + 0x0011)); call_jsl(0x01D368);
+                }
+            }
+            if (R16(0x04DE) >= 0x00C8) {                         /* the bar */
+                cx = R16(0x04DC);
+                if (cx >= 0x0008 && cx < 0x0017) {
+                    g_cpu.S = sp;                                /* PLP */
+                    cpu_set_p(p0);
+                    path_leave();
+                    return;
+                }
+                if (cx >= 0x0028 && cx < 0x0037) {       /* full screen on */
+                    CPU_SET_A16(0x000E); call_jsl(0x01D368);
+                    W16(0x1A06, R16(0x1A06) + 1);
+                    bus_write8(db, 0x011A, 0x16);
+                    bus_write8(db, 0x0426, (uint8_t)((bus_read8(db, 0x0426) & 0xFC) | 0x01));
+                    play_end(sp, p0, true);
+                    return;
+                }
+                if (cx >= 0x0040 && cx < 0x004F) {       /* the song on/off */
+                    CPU_SET_A16(0x000D); call_jsl(0x01D368);
+                    uint16_t aa = bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xAA));
+                    if (R16(0x0EAC) == 0) {
+                        W16(0x0EAC, 1);
+                        call_jsl(0x00C7AF);
+                        uint16_t zero = 0;
+                        aa = bus_read16(0x00, (uint16_t)(g_cpu.DP + 0xAA));
+                        call_tool_switch(aa, 1, &zero);
+                    } else {
+                        W16(0x0EAC, 0);
+                        call_tool_switch(aa, 0, 0);
+                    }
+                }
+            }
+        }
     }
-    g_cpu.S = sp;                                                /* PLP */
-    cpu_set_p(p0);
-    if (g_cpu.flag_X) { g_cpu.X &= 0x00FF; g_cpu.Y &= 0x00FF; }
+    play_end(sp, p0, R16(0x1A06) != 0);                          /* $BD4C */
 #undef R16
 #undef W16
 }
 
-/* $00:BBD4 (JSL): one step of the animation playback $00:BBD8. */
+/* $00:BBD4 (JSL): one step of the animation playback $00:BBD8. In full
+ * screen $BBD8 returns 3 further on, into other code: the ROM goes on
+ * there. */
 static void mp_00BBD4(void) {
-    call_jsr(0x00BBD8);
+    uint16_t s = g_cpu.S;
+    call_jsr_ret(0x00BBD8, 0xBBD6);
+    uint16_t ret = bus_wram_read16((uint16_t)(s - 1));
+    if (ret != 0xBBD6) recomp_set_redirect(0x000000u | (uint16_t)(ret + 1));
 }
 
 /* ---- Main states ($09D6, table $87B0). ---- */

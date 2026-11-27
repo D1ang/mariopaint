@@ -202,6 +202,37 @@ void mp_01833F(void);  /* Title state 1: animate */
 
 /* Miscellaneous (mp_misc.c) */
 void mp_register_misc(void);
+
+/* mp_states.c: main states of $00:87A8 */
+void mp_00C460(void);
+void mp_00C4D6(void);
+void mp_00C626(void);
+void mp_00BAAB(void);
+void mp_00BE43(void);
+void mp_00BB6D(void);
+void mp_00BF5F(void);
+void mp_00C04A(void);
+void mp_00C225(void);
+void mp_00C2FB(void);
+void mp_00C386(void);
+void mp_00CE60(void);
+void mp_00D50D(void);
+void mp_00D75B(void);
+void mp_00D069(void);
+void mp_00D321(void);
+void mp_00D8F1(void);
+void mp_00DD97(void);
+void mp_00DB59(void);
+void mp_00DB84(void);
+void mp_00DBE4(void);
+void mp_00DEB3(void);
+void mp_00DF09(void);
+void mp_00DC29(void);
+void mp_00DC8B(void);
+void mp_00DCC5(void);
+void mp_00DD31(void);
+void mp_00DD6D(void);
+void mp_register_states(void);
 void mp_009CC7(void);  /* the shape tools' part of $9C25 */
 void mp_009760(void);  /* Right-click / undo handler */
 void mp_00E0D4(void);  /* Palette color compute */
