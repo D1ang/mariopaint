@@ -273,4 +273,7 @@ void mp_0096CD(void);
 void mp_00DF2C(void);  /* Palette entry read */
 void mp_00DFC4(void);  /* Palette entry process */
 
+void mp_00E817(void);
+void mp_00E87A(void);
+
 #endif /* MP_FUNCTIONS_H */

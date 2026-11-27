@@ -126,6 +126,9 @@ JUMP_ENTERED += ["00C460", "00C4D6", "00C626", "00BAAB", "00BE43", "00BB6D", "00
                  # the special stamp's save and load screens
                  "00DB59", "00DB84", "00DBE4", "00DC29", "00DC8B", "00DCC5", "00DD31", "00DD6D"]
 
+# The pattern bar's top-bar handlers and state $01's exit.
+JUMP_ENTERED += ["00E817", "00E87A", "00C93C", "00CA76"]
+
 # Scenarios checked without the routines listed (see check_scenario).
 GNAT_LOOP = {"01A505", "01A5F3", "01A60E", "01C012", "01AF14", "01AFDB", "01C3C4",
              "01B0CA", "01B153", "01B17B", "01B27D"}
@@ -147,6 +150,9 @@ INNER = {"gnatinner": GNAT_LOOP, "gnatinner2": GNAT_LOOP, "gnatinner3": GNAT_LOO
          "shapesinner2": {"009C25"},
          "modesinner": {"00D869"},
          "copyinner": {"01D3BA"},
+         # state $01's exit on its own, without the routines it leaves through
+         "modes5binner": {"0087A8", "00C900", "00C93C"},
+         "modes5cinner": {"0087A8", "00C900", "00C93C"},
          "gnatbossinner": GNAT_LOOP - set(BOSS_PHASES),
          "gnatbossinner2": GNAT_LOOP | {"01B5F4", "01B60F"},
          # the rocket ($A9BE) with the clicks that lead to it
@@ -158,7 +164,7 @@ INNER = {"gnatinner": GNAT_LOOP, "gnatinner2": GNAT_LOOP, "gnatinner3": GNAT_LOO
 HANDLERS_ALONE = {"bars", "bars2", "bars3", "titlestates",
                   "modes", "modes2", "modes3", "modes4", "modes5", "modes6", "modes7", "patbar", "musicbar",
                   "stampfx", "stampfx2", "stampfx3", "stampfx4", "stampfx5", "stampfx6", "stampfx7", "stampfx8", "stampfx9", "musicexit",
-                  "letters"}
+                  "letters", "palarrow", "patbar2", "animbar"}
 DISPATCHERS = {"008BEB", "009564", "009598", "0095E7", "018308"}
 
 

@@ -254,6 +254,28 @@ SCENARIOS = {
     "saveleave": ["sram", MODE_BAR, (129, 212), (138, 82), ("wait", 200), (12, 210), ("wait", 300),
                   MODE_BAR, (129, 212), (138, 123), ("wait", 200), (12, 210), ("wait", 300),
                   (100, 100), ("wait", 60)],
+    # The top bar's right arrow, both buttons ($00:987B), round the rows.
+    "palarrow": [(244, 8)] * 7 + [(244, 8, "R")] * 8 + [(100, 100), ("wait", 60)],
+    # The pattern bar (as patbar) with the top bar in it ($9598 table $95E1):
+    # colours ($E817) and the arrow ($E87A) both ways, with a pattern, with
+    # the plain pen and on the second page.
+    "patbar2": [MODE_BAR, (80, 212), (80, 56), (128, 112), ("drag", 40, 40, 100, 90), (232, 212),
+                ("wait", 100), (76, 212), ("wait", 200), (40, 212), ("wait", 60), (60, 8), (124, 8)]
+               + [(244, 8)] * 7 + [(244, 8, "R")] * 8 + [(200, 212), ("wait", 60), (60, 8), (124, 8)]
+               + [(244, 8)] * 8 + [(244, 8, "R")] * 9 + [(56, 212), ("wait", 60), (60, 8)]
+               + [(244, 8)] * 7 + [(244, 8, "R")] * 8 + [("drag", 60, 60, 140, 140), (15, 212), ("wait", 60)],
+    # State $01 (mouse speed, $C93C): the two clicks its exit ($CA76)
+    # ignores (rows 0 and 4), then the exit; again with the stamp's $19FA.
+    # No speed is picked first: the pointer stays put after that.
+    "modes5b": [MODE_BAR, (168, 212), ("wait", 200), (100, 56), (100, 212), (12, 210), ("wait", 300),
+                (100, 100), ("wait", 60)],
+    "modes5c": [MODE_BAR, (168, 212), ("wait", 200), ("poke", "7E19FA=01"), (12, 210), ("wait", 300),
+                (100, 100), ("wait", 60)],
+    # The animation editor's bar with its stamp ($AA = 4), the button at
+    # x 112-127 ($99E1).
+    "animbar": [MODE_BAR, (80, 212), (80, 56), (128, 112), ("drag", 40, 40, 100, 90), (232, 212),
+                ("wait", 300), (120, 212), ("wait", 200), (100, 60), ("wait", 60), (120, 212),
+                ("wait", 100), (100, 60), ("wait", 60)],
     # The wave again with its callers left out, for the routines in it.
     "waveinner": None,
     "waveinner2": None,
@@ -310,6 +332,8 @@ SCENARIOS["drawinner2"] = SCENARIOS["draw"]
 SCENARIOS["shapesinner"] = SCENARIOS["shapes"]
 SCENARIOS["shapesinner2"] = SCENARIOS["shapes"]
 SCENARIOS["modesinner"] = SCENARIOS["modes"]
+SCENARIOS["modes5binner"] = SCENARIOS["modes5b"]
+SCENARIOS["modes5cinner"] = SCENARIOS["modes5c"]
 SCENARIOS["copyinner"] = SCENARIOS["copy"]
 SCENARIOS["gnatbossinner2"] = SCENARIOS["gnatboss"]
 

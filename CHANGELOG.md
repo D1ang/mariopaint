@@ -49,6 +49,10 @@ versions follow SemVer once the first one is tagged.
   moment, so sprites were now and then uploaded while the picture was being
   drawn (snesrecomp: `func_table.c`). The resumed routine also returns in its
   own bank, not the frame driver's.
+- The top bar's handlers in the pattern bar (`$00:E817`, `$00:E87A`) and the
+  exit of the mouse speed screen (`$00:CA76`) in C; `$00:C900` now returns
+  when that exit drops its return address. New tour scenarios reach these and
+  the buttons `$00:987B` and `$00:99E1`.
 - Animation Land and the special stamp: the path screens (`$00:C460`,
   `$00:C4D6` and what they lead to), the other main states of `$00:87A8`, the
   stamp's save and load screens (`$00:DB59`-`$00:DD6D`, `$00:DEB3`) and the

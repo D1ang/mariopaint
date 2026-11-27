@@ -1913,6 +1913,57 @@ void mp_00E848(void) {
     tail_jmp(0x00A363);
 }
 
+/* $00:E817: the top bar's colours in the pattern bar ($9598 table $95E1):
+ * sound 4, the colour's low nibble ($A8) into $0EBC, or into $0EBE with the
+ * plain pen ($0EB8 < 0); $96E1, then $E64F. */
+void mp_00E817(void) {
+    mb_sound(0x0004);
+    uint16_t c = (uint16_t)(pb_dp(0xA8) & 0x000F);
+    uint16_t o = (MB_R(0x0EB8) & 0x8000) ? 0x0EBE : 0x0EBC;
+    MB_W(o, (uint16_t)((MB_R(o) & 0xFFF0) | c));
+    CPU_SET_A16(c);
+    call_jsr(0x0096E1);
+    tail_jmp(0x00E64F);
+}
+
+/* $00:E87A: the arrow at the end of that bar: the left button steps the
+ * colour row up, the right one down. With a pattern the row goes through
+ * $E934 / $E944 (by page $0EBA) and the pairs at $E951 / $E953 (+$28
+ * downwards); the plain pen steps $0EBE and skips row $60. The row's sound
+ * ($62..), silent for row $40 of a pattern on page 1; $96E1, $A363. */
+void mp_00E87A(void) {
+    uint16_t b = (uint16_t)(MB_R(0x04CA) & 0x0044);
+    if (!b) { CPU_SET_A16(0); g_cpu.Y = 0x0010; return; }
+    uint16_t step = (b & 0x0040) ? 0x0010 : 0xFFF0;
+    uint16_t v, top;
+    if (!(MB_R(0x0EB8) & 0x8000)) {
+        uint16_t x = (uint16_t)((MB_R(0x0EBC) & 0x00F0) >> 4);
+        x = (uint16_t)(MB_R((uint16_t)((MB_R(0x0EBA) ? 0xE944 : 0xE934) + x)) & 0x00FF);
+        if (step & 0x8000) x = (uint16_t)(x + 0x0028);
+        top = (uint16_t)(MB_R(0x0EBC) & 0x000F);
+        v = (uint16_t)((MB_R(0x0EBC) & 0xFFF0) + step);
+        if (v == MB_R((uint16_t)(0xE951 + x))) v = MB_R((uint16_t)(0xE953 + x));
+        v = (uint16_t)(v | top);
+        MB_W(0x0EBC, v);
+    } else {
+        v = (uint16_t)((MB_R(0x0EBE) & 0x00F0) + step);
+        if (v == 0x0060) v = 0x00F0;
+        else if (v == 0x00E0) v = 0x0050;
+        top = (uint16_t)(v & 0x00FF);
+        v = (uint16_t)((MB_R(0x0EBE) & 0x000F) | top);
+        MB_W(0x0EBE, v);
+    }
+    uint16_t snd = (uint16_t)(v >> 4);
+    if (snd >= 0x0006) snd--;
+    snd = (uint16_t)(snd + 0x0062);
+    if ((MB_R(0x0EB8) & 0x8000) || MB_R(0x0EBA) == 0 || (MB_R(0x0EBC) & 0x00F0) != 0x0040)
+        mb_sound(snd);
+    CPU_SET_A16(top);
+    g_cpu.Y = step;
+    call_jsr(0x0096E1);
+    tail_jmp(0x00A363);
+}
+
 /* $00:EA69 (208-223): the eraser menu ($1992 = 1, tool 7, $B66C/$B6F4
  * cursor, $A525), tool switch with 8 and the page. */
 void mp_00EA69(void) {
@@ -3227,6 +3278,34 @@ static void mp_00C93C(void) {
     tail_jmp((uint32_t)t);
 }
 
+/* $00:CA76: the exit of state $01 (rows 0 and 4 of $C93C): a click at
+ * y >= $C8, x $08-$16: sound $41, the canvas back ($C414, or $C3DE with
+ * $19FA), uploaded and a frame; the tool from $1B12, bar mode 7, the canvas
+ * palette record and the state from before ($09D8). It then drops $C900's
+ * return address, so it returns past it. */
+static void mp_00CA76(void) {
+    uint8_t db = g_cpu.DB;
+    uint16_t y = bus_read16(db, 0x04DE), x = bus_read16(db, 0x04DC);
+    if (y < 0x00C8) { CPU_SET_A16(y); return; }
+    if (x < 0x0008 || x >= 0x0017) { CPU_SET_A16(x); return; }
+    CPU_SET_A16(0x0041);
+    call_jsl(0x01D368);
+    if (bus_read16(db, 0x19FA) != 0) call_jsr(0x00C3DE); else call_jsr(0x00C414);
+    call_jsl(0x01DE97);
+    call_jsl(0x01E06F);
+    call_jsl(0x01E2CE);
+    bus_write16(db, 0x04D0, bus_read16(db, 0x1B12));
+    bus_write16(0x00, (uint16_t)(g_cpu.DP + 0xAA), 0x0007);
+    call_tool_switch(0x0007, 0, 0);
+    if (bus_read16(db, 0x04D0) == 0x0006)
+        bus_write16(db, 0x09AB, (uint16_t)(bus_read16(db, 0x09AB) + 1));
+    call_jsr(0x00A363);
+    bus_write16(db, 0x1B18, 0);
+    bus_write16(db, 0x09D6, bus_read16(db, 0x09D8));
+    CPU_SET_A16(bus_wram_read16((uint16_t)(g_cpu.S + 1)));   /* PLA */
+    g_cpu.S = (uint16_t)(g_cpu.S + 2);
+}
+
 /* $00:C900: state $01, the sound test: a click below y $30 picks a row
  * ((y - $30) / 32, at most 4, and 4 only from y $C8): $1B1A = row - 1 and
  * $C93C with the row; then the ten objects 9..0 drawn ($01:F84F). */
@@ -3243,7 +3322,9 @@ static void mp_00C900(void) {
             if (go) {
                 bus_write16(g_cpu.DB, 0x1B1A, (uint16_t)(row - 1));
                 CPU_SET_A16(row);
+                uint16_t sp = g_cpu.S;
                 call_jsr(0x00C93C);
+                if (g_cpu.S != sp) { g_cpu.S = sp; return; }    /* $CA76 left */
             }
         }
     }
@@ -4017,6 +4098,7 @@ void mp_register_misc(void) {
     func_table_register(0x00CF50, mp_00CF50);
     func_table_register(0x00C900, mp_00C900);
     func_table_register(0x00C93C, mp_00C93C);
+    func_table_register(0x00CA76, mp_00CA76);
     func_table_register(0x00C94B, mp_00C94B);
     func_table_register(0x00D505, mp_00D505);
     func_table_register(0x00D03E, mp_00D03E);
@@ -4078,6 +4160,8 @@ void mp_register_misc(void) {
     func_table_register(0x00EA12, mp_00EA12);
     func_table_register(0x00E848, mp_00E848);
     func_table_register(0x00EA69, mp_00EA69);
+    func_table_register(0x00E817, mp_00E817);
+    func_table_register(0x00E87A, mp_00E87A);
     func_table_register(0x00EAA4, mp_00EAA4);
     func_table_register(0x00969C, mp_00969C);
 
