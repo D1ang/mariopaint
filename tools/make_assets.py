@@ -30,7 +30,9 @@ import canvas_tour  # noqa: E402
 
 # Scenarios that only repeat another one's clicks for the conformance check.
 REPEATS = {"titlestates", "musicbar", "gnatinner", "gnatinner2", "gnatinner3", "gnatinner4",
-           "rocketinner", "waveinner", "waveinner2"}
+           "gnatbossinner", "gnatbossinner2", "rocketinner", "waveinner", "waveinner2", "drawinner",
+           "drawinner2", "shapesinner", "shapesinner2", "modesinner", "modes5binner", "modes5cinner",
+           "copyinner"}
 
 
 def step(msg):
